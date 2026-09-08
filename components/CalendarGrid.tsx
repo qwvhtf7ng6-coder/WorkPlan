@@ -522,18 +522,37 @@ export default function CalendarGrid({
 
   const deptCapacity = useMemo(() => {
     const outer = new Map<string, Map<string, number>>();
+
+    // Pre-populate Map to maintain same return contract and avoid downstream regressions
     for (const dept of departments) {
-      const dm = new Map<string, number>();
-      for (const req of requests) {
-        if (req.status !== "APPROVED") continue;
-        if (!dept.users.some((u) => u.id === req.user.id)) continue;
-        for (const entry of req.entries) {
-          const dk = new Date(entry.date).toISOString().slice(0, 10);
+      outer.set(dept.id, new Map<string, number>());
+    }
+
+    // O(U): Build user-to-departments lookup (handles multiple departments)
+    const userDepts = new Map<string, string[]>();
+    for (const dept of departments) {
+      for (const user of dept.users) {
+        if (!userDepts.has(user.id)) userDepts.set(user.id, []);
+        userDepts.get(user.id)!.push(dept.id);
+      }
+    }
+
+    // O(R * E): Aggregate requests
+    for (const req of requests) {
+      if (req.status !== "APPROVED") continue;
+
+      const depts = userDepts.get(req.user.id);
+      if (!depts) continue;
+
+      for (const entry of req.entries) {
+        const dk = new Date(entry.date).toISOString().slice(0, 10);
+        for (const deptId of depts) {
+          const dm = outer.get(deptId)!;
           dm.set(dk, (dm.get(dk) ?? 0) + 1);
         }
       }
-      outer.set(dept.id, dm);
     }
+
     return outer;
   }, [departments, requests]);
 
