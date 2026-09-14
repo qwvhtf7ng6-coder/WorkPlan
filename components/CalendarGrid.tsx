@@ -521,19 +521,35 @@ export default function CalendarGrid({
   }, [requests]);
 
   const deptCapacity = useMemo(() => {
+    // ⚡ Bolt: O(U) precompute user -> department mapping
+    const userToDepts = new Map<string, string[]>();
     const outer = new Map<string, Map<string, number>>();
+
     for (const dept of departments) {
-      const dm = new Map<string, number>();
-      for (const req of requests) {
-        if (req.status !== "APPROVED") continue;
-        if (!dept.users.some((u) => u.id === req.user.id)) continue;
-        for (const entry of req.entries) {
-          const dk = new Date(entry.date).toISOString().slice(0, 10);
+      outer.set(dept.id, new Map<string, number>());
+      for (const user of dept.users) {
+        const depts = userToDepts.get(user.id) ?? [];
+        depts.push(dept.id);
+        userToDepts.set(user.id, depts);
+      }
+    }
+
+    // ⚡ Bolt: O(R) single pass over requests
+    for (const req of requests) {
+      if (req.status !== "APPROVED") continue;
+
+      const userDepts = userToDepts.get(req.user.id);
+      if (!userDepts) continue;
+
+      for (const entry of req.entries) {
+        const dk = new Date(entry.date).toISOString().slice(0, 10);
+        for (const deptId of userDepts) {
+          const dm = outer.get(deptId)!;
           dm.set(dk, (dm.get(dk) ?? 0) + 1);
         }
       }
-      outer.set(dept.id, dm);
     }
+
     return outer;
   }, [departments, requests]);
 
