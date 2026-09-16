@@ -33,7 +33,7 @@ interface PrintCalendarViewProps {
   year: number;
   month: number;
   /** Explicit list of days to print — matches whatever is on screen (month or week) */
-  days?: Date[];
+  days?: { date: Date; dk: string; isWeekend: boolean; dayNumber: string; dayNameShort: string }[];
   /** Display title override — e.g. "Uge 21 · 19.–25. maj 2026" */
   printTitle?: string;
   departments: PrintDept[];
@@ -57,7 +57,16 @@ export function PrintCalendarView({
 
   const monthDaysList = Array.from(
     { length: getDaysInMonth(new Date(year, month - 1)) },
-    (_, i) => new Date(year, month - 1, i + 1),
+    (_, i) => {
+      const d = new Date(year, month - 1, i + 1);
+      return {
+        date: d,
+        dk: format(d, "yyyy-MM-dd"),
+        isWeekend: isWeekend(d),
+        dayNumber: format(d, "d"),
+        dayNameShort: format(d, "EEEEE", { locale: da })
+      };
+    }
   );
   const days = daysProp ?? monthDaysList;
   const daysInMonth = days.length;
@@ -226,9 +235,8 @@ export function PrintCalendarView({
         <thead>
           <tr>
             <th style={S.thName}>Medarbejder</th>
-            {days.map((d, i) => {
-              const dk = format(d, "yyyy-MM-dd");
-              const weekend = isWeekend(d);
+            {days.map((fd, i) => {
+              const { date: d, dk, isWeekend: weekend } = fd;
               const holiday = holidayMap.has(dk);
               const isToday = dk === todayKey;
               const dayOfWeek = (d.getDay() + 6) % 7; // Mon=0
@@ -309,12 +317,11 @@ export function PrintCalendarView({
                       </td>
 
                       {/* Day cells */}
-                      {days.map((d) => {
-                        const dk = format(d, "yyyy-MM-dd");
+                      {days.map((fd) => {
+                        const { dk, isWeekend: weekend } = fd;
                         const reqs = requestLookup.get(emp.id)?.get(dk) ?? [];
                         const approved = reqs.find((r) => r.status === "APPROVED");
                         const pending = reqs.find((r) => r.status === "PENDING") && isManagerOrAdmin;
-                        const weekend = isWeekend(d);
                         const holiday = holidayMap.has(dk);
                         const isToday = dk === todayKey;
 
