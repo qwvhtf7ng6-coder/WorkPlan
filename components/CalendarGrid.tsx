@@ -19,6 +19,14 @@ import { PrintCalendarView } from "@/components/PrintCalendarView";
 
 interface CalendarUser { id: string; name: string; }
 
+export interface FormattedDay {
+  date: Date;
+  dk: string;
+  dayOfMonth: string;
+  dayOfWeek: string;
+  isWeekendDay: boolean;
+}
+
 interface CalendarDepartment {
   id: string; name: string; maxConcurrent: number; shiftsEnabled: boolean; users: CalendarUser[];
 }
@@ -169,7 +177,7 @@ function CapacityDot({ count, max }: { count: number; max: number }) {
 function CalendarTable({
   days, departments, holidayMap, requestLookup, deptCapacity, deptColorMap, todayKey, onOpenCell, isManagerOrAdmin, shiftLookup,
 }: {
-  days: Date[];
+  days: FormattedDay[];
   departments: CalendarDepartment[];
   holidayMap: Map<string, string>;
   requestLookup: Map<string, Map<string, CalendarRequest[]>>;
@@ -191,10 +199,8 @@ function CalendarTable({
           >
             Medarbejder
           </th>
-          {days.map((d) => {
-            const dk = format(d, "yyyy-MM-dd");
+          {days.map(({ dk, dayOfMonth, dayOfWeek, isWeekendDay }) => {
             const holiday = holidayMap.get(dk);
-            const weekend = isWeekend(d);
             const isToday = dk === todayKey;
             return (
               <th
@@ -208,22 +214,22 @@ function CalendarTable({
                   borderColor: "var(--c-border)",
                   background: holiday
                     ? "var(--c-danger-bg)"
-                    : weekend
+                    : isWeekendDay
                     ? "var(--c-bg)"
                     : isToday
                     ? "var(--c-primary-light)"
                     : "var(--c-surface)",
                   color: holiday
                     ? "var(--c-danger-text)"
-                    : weekend
+                    : isWeekendDay
                     ? "var(--c-text-subtle)"
                     : isToday
                     ? "var(--c-primary)"
                     : "var(--c-text-muted)",
                 }}
               >
-                <div className="font-bold text-[12px]">{format(d, "d")}</div>
-                <div className="text-[9px] uppercase opacity-70">{format(d, "EEEEE", { locale: da })}</div>
+                <div className="font-bold text-[12px]">{dayOfMonth}</div>
+                <div className="text-[9px] uppercase opacity-70">{dayOfWeek}</div>
                 {holiday && <div className="text-[8px] leading-tight">🎌</div>}
               </th>
             );
@@ -247,14 +253,12 @@ function CalendarTable({
                 >
                   {dept.name}
                 </td>
-                {days.map((d) => {
-                  const dk = format(d, "yyyy-MM-dd");
+                {days.map(({ dk, isWeekendDay }) => {
                   const count = capacityMap.get(dk) ?? 0;
-                  const weekend = isWeekend(d);
                   const holiday = holidayMap.has(dk);
                   return (
                     <td key={dk} className="border-b border-r text-center py-0.5"
-                      style={{ borderColor: `${headerBg}66`, backgroundColor: weekend || holiday ? `${headerBg}88` : headerBg }}>
+                      style={{ borderColor: `${headerBg}66`, backgroundColor: isWeekendDay || holiday ? `${headerBg}88` : headerBg }}>
                       <CapacityDot count={count} max={dept.maxConcurrent} />
                     </td>
                   );
@@ -279,13 +283,11 @@ function CalendarTable({
                       {emp.name}
                     </span>
                   </td>
-                  {days.map((d) => {
-                    const dk = format(d, "yyyy-MM-dd");
+                  {days.map(({ dk, isWeekendDay }) => {
                     const reqs = requestLookup.get(emp.id)?.get(dk) ?? [];
                     const cellShifts = dept.shiftsEnabled
                       ? (shiftLookup.get(emp.id)?.get(dk) ?? [])
                       : [];
-                    const weekend = isWeekend(d);
                     const holiday = holidayMap.has(dk);
                     const hasApproved = reqs.some((r) => r.status === "APPROVED");
                     const hasPending = reqs.some((r) => r.status === "PENDING") && !!isManagerOrAdmin;
@@ -304,7 +306,7 @@ function CalendarTable({
                       cellClass += " hover:opacity-90";
                     } else if (holiday) {
                       cellStyle = { ...cellStyle, background: "var(--c-danger-bg)" };
-                    } else if (weekend) {
+                    } else if (isWeekendDay) {
                       cellStyle = { ...cellStyle, background: "var(--c-bg)" };
                     } else {
                       cellClass += " hover:bg-primary-muted/20";
@@ -490,7 +492,16 @@ export default function CalendarGrid({
 
   const monthDays = useMemo(() => getMonthDays(year, month), [year, month]);
   const weekDays  = useMemo(() => eachDayOfInterval({ start: startOfWeek(weekStart, { weekStartsOn: 1 }), end: endOfWeek(weekStart, { weekStartsOn: 1 }) }), [weekStart]);
-  const days = viewMode === "month" ? monthDays : weekDays;
+  const rawDays = viewMode === "month" ? monthDays : weekDays;
+  const days = useMemo<FormattedDay[]>(() => {
+    return rawDays.map((d) => ({
+      date: d,
+      dk: format(d, "yyyy-MM-dd"),
+      dayOfMonth: format(d, "d"),
+      dayOfWeek: format(d, "EEEEE", { locale: da }),
+      isWeekendDay: isWeekend(d)
+    }));
+  }, [rawDays]);
 
   const holidayMap = useMemo(() => new Map<string, string>(holidays.map((h) => [new Date(h.date).toISOString().slice(0, 10), h.name])), [holidays]);
 
@@ -673,7 +684,7 @@ export default function CalendarGrid({
       <PrintCalendarView
         year={year}
         month={month}
-        days={days}
+        days={rawDays}
         printTitle={
           viewMode === "week"
             ? `Uge ${getISOWeek(weekDays[0])} · ${format(weekDays[0], "d. MMM", { locale: da })}–${format(weekDays[6], "d. MMM yyyy", { locale: da })}`
