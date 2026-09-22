@@ -59,38 +59,42 @@ function AbsenceReport({ users, requests, departments, currentYear }: Props) {
   const [deptFilter, setDeptFilter] = useState("");
 
   const rows = useMemo(() => {
+    // ⚡ Bolt: Optimize report generation by pre-aggregating data
+    // Prevents O(Users * Requests) iterations and redundant Date parsing
+    const userAggregates = new Map<string, { totalDays: number; monthly: number[]; reqCount: number }>();
+
+    for (const r of requests) {
+      if (r.status !== "APPROVED") continue;
+      if (new Date(r.createdAt).getFullYear() !== year) continue;
+
+      let agg = userAggregates.get(r.userId);
+      if (!agg) {
+        agg = { totalDays: 0, monthly: Array(12).fill(0), reqCount: 0 };
+        userAggregates.set(r.userId, agg);
+      }
+      agg.reqCount++;
+
+      for (const e of r.entries) {
+        const d = new Date(e.date);
+        if (d.getFullYear() !== year) continue;
+        const m = d.getMonth();
+        if (month !== "all" && m !== month) continue;
+
+        agg.totalDays += e.days;
+        agg.monthly[m] += e.days;
+      }
+    }
+
     return users
       .filter((u) => !deptFilter || u.department?.id === deptFilter)
       .map((u) => {
-        const userReqs = requests.filter((r) => {
-          if (r.userId !== u.id) return false;
-          if (r.status !== "APPROVED") return false;
-          const y = new Date(r.createdAt).getFullYear();
-          if (y !== year) return false;
-          return true;
-        });
-
-        // Filter entries by month if set
-        const filteredEntries = userReqs.flatMap((r) =>
-          r.entries.filter((e) => {
-            const d = new Date(e.date);
-            if (d.getFullYear() !== year) return false;
-            if (month !== "all" && d.getMonth() !== month) return false;
-            return true;
-          })
-        );
-
-        const totalDays = filteredEntries.reduce((s, e) => s + e.days, 0);
-
-        // Monthly breakdown
-        const monthly = Array.from({ length: 12 }, (_, m) => {
-          const days = filteredEntries.filter((e) => new Date(e.date).getMonth() === m).reduce((s, e) => s + e.days, 0);
-          return days;
-        });
-
-        return { user: u, totalDays, monthly, reqCount: userReqs.length };
+        const agg = userAggregates.get(u.id);
+        if (agg) {
+          return { user: u, totalDays: agg.totalDays, monthly: agg.monthly, reqCount: agg.reqCount };
+        }
+        return { user: u, totalDays: 0, monthly: Array(12).fill(0), reqCount: 0 };
       })
-      .filter((r) => month === "all" ? r.totalDays > 0 : r.totalDays > 0);
+      .filter((r) => r.totalDays > 0);
   }, [users, requests, year, month, deptFilter]);
 
   return (
