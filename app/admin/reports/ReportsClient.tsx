@@ -211,20 +211,50 @@ function DepartmentReport({ departments, requests, currentYear }: Props) {
   const [year, setYear] = useState(currentYear);
 
   const rows = useMemo(() => {
-    return departments.map((dept) => {
-      const deptReqs = requests.filter((r) => r.departmentId === dept.id && new Date(r.createdAt).getFullYear() === year);
-      const approved = deptReqs.filter((r) => r.status === "APPROVED");
-      const pending = deptReqs.filter((r) => r.status === "PENDING");
-      const rejected = deptReqs.filter((r) => r.status === "REJECTED");
-      const totalDays = approved.flatMap((r) => r.entries).reduce((s, e) => s + e.days, 0);
+    // Pre-filter requests for the current year to avoid parsing dates in O(D * R) loop
+    const yearRequests = requests.filter((r) => new Date(r.createdAt).getFullYear() === year);
 
-      const monthly = Array.from({ length: 12 }, (_, m) =>
-        approved.flatMap((r) => r.entries).filter((e) => new Date(e.date).getMonth() === m && new Date(e.date).getFullYear() === year).reduce((s, e) => s + e.days, 0)
-      );
+    return departments.map((dept) => {
+      const deptReqs = yearRequests.filter((r) => r.departmentId === dept.id);
+
+      let approvedCount = 0;
+      let pendingCount = 0;
+      let rejectedCount = 0;
+      let totalDays = 0;
+      const monthly = Array(12).fill(0);
+
+      // Single pass over department requests instead of multiple .filter() / .flatMap() arrays
+      for (const req of deptReqs) {
+        if (req.status === "PENDING") {
+          pendingCount++;
+        } else if (req.status === "REJECTED") {
+          rejectedCount++;
+        } else if (req.status === "APPROVED") {
+          approvedCount++;
+          // Single pass over entries instead of iterating 12 times per entry for monthly aggregation
+          for (const entry of req.entries) {
+            const date = new Date(entry.date);
+            if (date.getFullYear() === year) {
+              const month = date.getMonth();
+              monthly[month] += entry.days;
+              totalDays += entry.days;
+            }
+          }
+        }
+      }
 
       const peakMonth = monthly.indexOf(Math.max(...monthly));
 
-      return { dept, totalDays, monthly, peakMonth, approved: approved.length, pending: pending.length, rejected: rejected.length, total: deptReqs.length };
+      return {
+        dept,
+        totalDays,
+        monthly,
+        peakMonth,
+        approved: approvedCount,
+        pending: pendingCount,
+        rejected: rejectedCount,
+        total: deptReqs.length
+      };
     }).sort((a, b) => b.totalDays - a.totalDays);
   }, [departments, requests, year]);
 
