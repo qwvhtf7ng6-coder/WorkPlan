@@ -180,6 +180,17 @@ function CalendarTable({
   isManagerOrAdmin?: boolean;
   shiftLookup: Map<string, Map<string, CalendarShift[]>>;
 }) {
+  // Precompute static column data to avoid calling expensive date-fns functions (format, isWeekend) in nested loops (O(Users * Days))
+  const formattedDays = useMemo(() => {
+    return days.map(d => ({
+      date: d,
+      dateKey: format(d, "yyyy-MM-dd"),
+      isWeekend: isWeekend(d),
+      dayOfMonth: format(d, "d"),
+      dayOfWeek: format(d, "EEEEE", { locale: da })
+    }));
+  }, [days]);
+
   return (
     <table className="border-collapse text-xs" style={{ minWidth: "max-content" }}>
       <thead className="sticky top-0 z-20">
@@ -191,10 +202,10 @@ function CalendarTable({
           >
             Medarbejder
           </th>
-          {days.map((d) => {
-            const dk = format(d, "yyyy-MM-dd");
+          {formattedDays.map((fd) => {
+            const dk = fd.dateKey;
             const holiday = holidayMap.get(dk);
-            const weekend = isWeekend(d);
+            const weekend = fd.isWeekend;
             const isToday = dk === todayKey;
             return (
               <th
@@ -222,8 +233,8 @@ function CalendarTable({
                     : "var(--c-text-muted)",
                 }}
               >
-                <div className="font-bold text-[12px]">{format(d, "d")}</div>
-                <div className="text-[9px] uppercase opacity-70">{format(d, "EEEEE", { locale: da })}</div>
+                <div className="font-bold text-[12px]">{fd.dayOfMonth}</div>
+                <div className="text-[9px] uppercase opacity-70">{fd.dayOfWeek}</div>
                 {holiday && <div className="text-[8px] leading-tight">🎌</div>}
               </th>
             );
@@ -247,10 +258,10 @@ function CalendarTable({
                 >
                   {dept.name}
                 </td>
-                {days.map((d) => {
-                  const dk = format(d, "yyyy-MM-dd");
+                {formattedDays.map((fd) => {
+                  const dk = fd.dateKey;
                   const count = capacityMap.get(dk) ?? 0;
-                  const weekend = isWeekend(d);
+                  const weekend = fd.isWeekend;
                   const holiday = holidayMap.has(dk);
                   return (
                     <td key={dk} className="border-b border-r text-center py-0.5"
@@ -279,13 +290,13 @@ function CalendarTable({
                       {emp.name}
                     </span>
                   </td>
-                  {days.map((d) => {
-                    const dk = format(d, "yyyy-MM-dd");
+                  {formattedDays.map((fd) => {
+                    const dk = fd.dateKey;
                     const reqs = requestLookup.get(emp.id)?.get(dk) ?? [];
                     const cellShifts = dept.shiftsEnabled
                       ? (shiftLookup.get(emp.id)?.get(dk) ?? [])
                       : [];
-                    const weekend = isWeekend(d);
+                    const weekend = fd.isWeekend;
                     const holiday = holidayMap.has(dk);
                     const hasApproved = reqs.some((r) => r.status === "APPROVED");
                     const hasPending = reqs.some((r) => r.status === "PENDING") && !!isManagerOrAdmin;
