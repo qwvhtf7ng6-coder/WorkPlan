@@ -1,0 +1,3 @@
+## 2023-10-25 - Avoid array operations inside useMemo loops
+**Learning:** React `useMemo` hooks often process arrays of items (users, departments). Executing iterative array methods (e.g., `flatMap`, `filter`, `reduce`) inside these main loops for nested data (e.g., matching entries to 12 months) creates severe `O(N * M)` complexity and massive garbage collection overhead from temporary array instantiations.
+**Action:** Replace nested array methods within iterative mapping loops with a single-pass standard `for` loop accumulation block that initializes standard variables (e.g. `Array(12).fill(0)` and integer counters), updating them concurrently during a single traversal.
