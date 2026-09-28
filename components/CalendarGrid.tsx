@@ -362,9 +362,14 @@ function MobileCalendarList({
   const holidayMap = useMemo(() => new Map<string, string>(holidays.map((h) => [new Date(h.date).toISOString().slice(0, 10), h.name])), [holidays]);
   const requestsByUser = useMemo(() => {
     const map = new Map<string, CalendarRequest[]>();
+    // Bolt Optimization: Half Map lookups
     for (const req of requests) {
-      if (!map.has(req.user.id)) map.set(req.user.id, []);
-      map.get(req.user.id)!.push(req);
+      const userReqs = map.get(req.user.id);
+      if (userReqs) {
+        userReqs.push(req);
+      } else {
+        map.set(req.user.id, [req]);
+      }
     }
     return map;
   }, [requests]);
@@ -496,43 +501,78 @@ export default function CalendarGrid({
 
   const shiftLookup = useMemo(() => {
     const map = new Map<string, Map<string, CalendarShift[]>>();
+    // Bolt Optimization: Half Map lookups
     for (const s of shifts) {
       const dk = new Date(s.date).toISOString().slice(0, 10);
-      if (!map.has(s.userId)) map.set(s.userId, new Map());
-      const dm = map.get(s.userId)!;
-      if (!dm.has(dk)) dm.set(dk, []);
-      dm.get(dk)!.push(s);
+      let dm = map.get(s.userId);
+      if (!dm) {
+        dm = new Map();
+        map.set(s.userId, dm);
+      }
+      const dayShifts = dm.get(dk);
+      if (dayShifts) {
+        dayShifts.push(s);
+      } else {
+        dm.set(dk, [s]);
+      }
     }
     return map;
   }, [shifts]);
 
   const requestLookup = useMemo(() => {
     const map = new Map<string, Map<string, CalendarRequest[]>>();
+    // Bolt Optimization: Half Map lookups
     for (const req of requests) {
       for (const entry of req.entries) {
         const dk = new Date(entry.date).toISOString().slice(0, 10);
-        if (!map.has(req.user.id)) map.set(req.user.id, new Map());
-        const dm = map.get(req.user.id)!;
-        if (!dm.has(dk)) dm.set(dk, []);
-        dm.get(dk)!.push(req);
+        let dm = map.get(req.user.id);
+        if (!dm) {
+          dm = new Map();
+          map.set(req.user.id, dm);
+        }
+        const dayReqs = dm.get(dk);
+        if (dayReqs) {
+          dayReqs.push(req);
+        } else {
+          dm.set(dk, [req]);
+        }
       }
     }
     return map;
   }, [requests]);
 
   const deptCapacity = useMemo(() => {
+    // Bolt Optimization: Replace O(D*R*U) loop with O(R) + O(D*U) by precomputing user-to-dept mapping
     const outer = new Map<string, Map<string, number>>();
+    const userToDepts = new Map<string, string[]>();
+
+    // Precompute department mappings for all users (O(D*U))
     for (const dept of departments) {
-      const dm = new Map<string, number>();
-      for (const req of requests) {
-        if (req.status !== "APPROVED") continue;
-        if (!dept.users.some((u) => u.id === req.user.id)) continue;
-        for (const entry of req.entries) {
-          const dk = new Date(entry.date).toISOString().slice(0, 10);
+      outer.set(dept.id, new Map());
+      for (const user of dept.users) {
+        const depts = userToDepts.get(user.id);
+        if (depts) {
+          depts.push(dept.id);
+        } else {
+          userToDepts.set(user.id, [dept.id]);
+        }
+      }
+    }
+
+    // Single pass over requests (O(R))
+    for (const req of requests) {
+      if (req.status !== "APPROVED") continue;
+      const userDepts = userToDepts.get(req.user.id);
+      if (!userDepts) continue;
+
+      for (const entry of req.entries) {
+        const dk = new Date(entry.date).toISOString().slice(0, 10);
+        // Increment capacity for all departments the user belongs to
+        for (const deptId of userDepts) {
+          const dm = outer.get(deptId)!;
           dm.set(dk, (dm.get(dk) ?? 0) + 1);
         }
       }
-      outer.set(dept.id, dm);
     }
     return outer;
   }, [departments, requests]);
