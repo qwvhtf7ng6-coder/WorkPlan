@@ -498,10 +498,17 @@ export default function CalendarGrid({
     const map = new Map<string, Map<string, CalendarShift[]>>();
     for (const s of shifts) {
       const dk = new Date(s.date).toISOString().slice(0, 10);
-      if (!map.has(s.userId)) map.set(s.userId, new Map());
-      const dm = map.get(s.userId)!;
-      if (!dm.has(dk)) dm.set(dk, []);
-      dm.get(dk)!.push(s);
+      let userMap = map.get(s.userId);
+      if (!userMap) {
+        userMap = new Map();
+        map.set(s.userId, userMap);
+      }
+      let dayShifts = userMap.get(dk);
+      if (!dayShifts) {
+        dayShifts = [];
+        userMap.set(dk, dayShifts);
+      }
+      dayShifts.push(s);
     }
     return map;
   }, [shifts]);
@@ -509,30 +516,56 @@ export default function CalendarGrid({
   const requestLookup = useMemo(() => {
     const map = new Map<string, Map<string, CalendarRequest[]>>();
     for (const req of requests) {
+      let userMap = map.get(req.user.id);
+      if (!userMap) {
+        userMap = new Map();
+        map.set(req.user.id, userMap);
+      }
       for (const entry of req.entries) {
         const dk = new Date(entry.date).toISOString().slice(0, 10);
-        if (!map.has(req.user.id)) map.set(req.user.id, new Map());
-        const dm = map.get(req.user.id)!;
-        if (!dm.has(dk)) dm.set(dk, []);
-        dm.get(dk)!.push(req);
+        let dayReqs = userMap.get(dk);
+        if (!dayReqs) {
+          dayReqs = [];
+          userMap.set(dk, dayReqs);
+        }
+        dayReqs.push(req);
       }
     }
     return map;
   }, [requests]);
 
   const deptCapacity = useMemo(() => {
+    // ⚡ Bolt: Optimize deptCapacity calculation
+    // Instead of doing an O(D * R * U) nested search using dept.users.some(),
+    // we pre-compute a user -> department[] mapping to do it in O(D * U + R) time.
     const outer = new Map<string, Map<string, number>>();
+    const userDepts = new Map<string, string[]>();
+
+    // Initialize outer map and populate userDepts map
     for (const dept of departments) {
-      const dm = new Map<string, number>();
-      for (const req of requests) {
-        if (req.status !== "APPROVED") continue;
-        if (!dept.users.some((u) => u.id === req.user.id)) continue;
-        for (const entry of req.entries) {
-          const dk = new Date(entry.date).toISOString().slice(0, 10);
-          dm.set(dk, (dm.get(dk) ?? 0) + 1);
+      outer.set(dept.id, new Map<string, number>());
+      for (const u of dept.users) {
+        let depts = userDepts.get(u.id);
+        if (!depts) {
+          depts = [];
+          userDepts.set(u.id, depts);
+        }
+        depts.push(dept.id);
+      }
+    }
+
+    for (const req of requests) {
+      if (req.status !== "APPROVED") continue;
+      const depts = userDepts.get(req.user.id);
+      if (!depts) continue;
+
+      for (const entry of req.entries) {
+        const dk = new Date(entry.date).toISOString().slice(0, 10);
+        for (const deptId of depts) {
+          const dm = outer.get(deptId);
+          if (dm) dm.set(dk, (dm.get(dk) ?? 0) + 1);
         }
       }
-      outer.set(dept.id, dm);
     }
     return outer;
   }, [departments, requests]);
