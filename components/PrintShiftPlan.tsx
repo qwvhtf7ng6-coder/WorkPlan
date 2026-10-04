@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo } from "react";
 import { format, addDays, isSameDay, parseISO, getISOWeek } from "date-fns";
 import { da } from "date-fns/locale";
 
@@ -67,22 +68,35 @@ export function PrintShiftPlan({
     ? departments.find((d) => d.id === selectedDeptId)?.name ?? "Alle afdelinger"
     : "Alle afdelinger";
 
+  const assignmentLookup = useMemo(() => {
+    const map = new Map<string, Map<string, ShiftAssignment[]>>();
+    for (const a of assignments) {
+      const dk = format(parseISO(a.date), "yyyy-MM-dd");
+      if (!map.has(a.user.id)) map.set(a.user.id, new Map());
+      const userMap = map.get(a.user.id)!;
+      if (!userMap.has(dk)) userMap.set(dk, []);
+      userMap.get(dk)!.push(a);
+    }
+    return map;
+  }, [assignments]);
+
   function getAssignments(userId: string, date: Date): ShiftAssignment[] {
-    return assignments.filter(
-      (a) => a.user.id === userId && isSameDay(parseISO(a.date), date)
-    );
+    const dk = format(date, "yyyy-MM-dd");
+    return assignmentLookup.get(userId)?.get(dk) ?? [];
   }
 
   // Build legend from templates actually used this week
-  const usedTemplates = new Map<string, ShiftTemplate>();
-  for (const a of assignments) {
-    if (!usedTemplates.has(a.template.id)) {
-      usedTemplates.set(a.template.id, a.template);
+  const legendItems = useMemo(() => {
+    const usedTemplates = new Map<string, ShiftTemplate>();
+    for (const a of assignments) {
+      if (!usedTemplates.has(a.template.id)) {
+        usedTemplates.set(a.template.id, a.template);
+      }
     }
-  }
-  const legendItems = Array.from(usedTemplates.values()).sort((a, b) =>
-    a.name.localeCompare(b.name, "da")
-  );
+    return Array.from(usedTemplates.values()).sort((a, b) =>
+      a.name.localeCompare(b.name, "da")
+    );
+  }, [assignments]);
 
   // Day column header styles
   const dayNames = ["Man", "Tir", "Ons", "Tor", "Fre", "Lør", "Søn"];
