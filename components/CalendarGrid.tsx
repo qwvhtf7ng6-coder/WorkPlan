@@ -180,6 +180,15 @@ function CalendarTable({
   isManagerOrAdmin?: boolean;
   shiftLookup: Map<string, Map<string, CalendarShift[]>>;
 }) {
+  // ⚡ Bolt: Precompute formatted dates to prevent O(Users * Days) redundant format() calls
+  const formattedDays = useMemo(() => {
+    return days.map(d => ({
+      d,
+      dk: format(d, "yyyy-MM-dd"),
+      weekend: isWeekend(d),
+    }));
+  }, [days]);
+
   return (
     <table className="border-collapse text-xs" style={{ minWidth: "max-content" }}>
       <thead className="sticky top-0 z-20">
@@ -191,10 +200,8 @@ function CalendarTable({
           >
             Medarbejder
           </th>
-          {days.map((d) => {
-            const dk = format(d, "yyyy-MM-dd");
+          {formattedDays.map(({ d, dk, weekend }) => {
             const holiday = holidayMap.get(dk);
-            const weekend = isWeekend(d);
             const isToday = dk === todayKey;
             return (
               <th
@@ -247,10 +254,8 @@ function CalendarTable({
                 >
                   {dept.name}
                 </td>
-                {days.map((d) => {
-                  const dk = format(d, "yyyy-MM-dd");
+                {formattedDays.map(({ dk, weekend }) => {
                   const count = capacityMap.get(dk) ?? 0;
-                  const weekend = isWeekend(d);
                   const holiday = holidayMap.has(dk);
                   return (
                     <td key={dk} className="border-b border-r text-center py-0.5"
@@ -279,13 +284,11 @@ function CalendarTable({
                       {emp.name}
                     </span>
                   </td>
-                  {days.map((d) => {
-                    const dk = format(d, "yyyy-MM-dd");
+                  {formattedDays.map(({ dk, weekend }) => {
                     const reqs = requestLookup.get(emp.id)?.get(dk) ?? [];
                     const cellShifts = dept.shiftsEnabled
                       ? (shiftLookup.get(emp.id)?.get(dk) ?? [])
                       : [];
-                    const weekend = isWeekend(d);
                     const holiday = holidayMap.has(dk);
                     const hasApproved = reqs.some((r) => r.status === "APPROVED");
                     const hasPending = reqs.some((r) => r.status === "PENDING") && !!isManagerOrAdmin;
@@ -521,18 +524,34 @@ export default function CalendarGrid({
   }, [requests]);
 
   const deptCapacity = useMemo(() => {
+    // ⚡ Bolt: Precompute user-to-departments mapping for O(1) lookups
+    const userDepts = new Map<string, string[]>();
+    for (const dept of departments) {
+      for (const u of dept.users) {
+        const list = userDepts.get(u.id) ?? [];
+        list.push(dept.id);
+        userDepts.set(u.id, list);
+      }
+    }
+
     const outer = new Map<string, Map<string, number>>();
     for (const dept of departments) {
-      const dm = new Map<string, number>();
-      for (const req of requests) {
-        if (req.status !== "APPROVED") continue;
-        if (!dept.users.some((u) => u.id === req.user.id)) continue;
-        for (const entry of req.entries) {
-          const dk = new Date(entry.date).toISOString().slice(0, 10);
+      outer.set(dept.id, new Map<string, number>());
+    }
+
+    // ⚡ Bolt: Single pass over requests, updating only relevant departments
+    for (const req of requests) {
+      if (req.status !== "APPROVED") continue;
+      const deptsForUser = userDepts.get(req.user.id);
+      if (!deptsForUser) continue;
+
+      for (const entry of req.entries) {
+        const dk = new Date(entry.date).toISOString().slice(0, 10);
+        for (const deptId of deptsForUser) {
+          const dm = outer.get(deptId)!;
           dm.set(dk, (dm.get(dk) ?? 0) + 1);
         }
       }
-      outer.set(dept.id, dm);
     }
     return outer;
   }, [departments, requests]);
