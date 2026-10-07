@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useMemo } from "react";
+import { useState, useRef, useMemo, Fragment } from "react";
 import { useRouter } from "next/navigation";
 import {
   format, isWeekend, getISOWeek,
@@ -238,9 +238,9 @@ function CalendarTable({
           const cellBg = color?.hexLight ?? "#bbf7d0";
 
           return (
-            <>
+            <Fragment key={`dept-${dept.id}`}>
               {/* Dept header row */}
-              <tr key={`dept-${dept.id}`}>
+              <tr>
                 <td
                   className="sticky left-0 z-10 text-white px-3 py-1.5 font-bold text-[11px] uppercase tracking-widest whitespace-nowrap border-b"
                   style={{ minWidth: 160, backgroundColor: headerBg, borderColor: `${headerBg}cc` }}
@@ -346,7 +346,7 @@ function CalendarTable({
                   })}
                 </tr>
               ))}
-            </>
+            </Fragment>
           );
         })}
       </tbody>
@@ -363,8 +363,12 @@ function MobileCalendarList({
   const requestsByUser = useMemo(() => {
     const map = new Map<string, CalendarRequest[]>();
     for (const req of requests) {
-      if (!map.has(req.user.id)) map.set(req.user.id, []);
-      map.get(req.user.id)!.push(req);
+      let userReqs = map.get(req.user.id);
+      if (!userReqs) {
+        userReqs = [];
+        map.set(req.user.id, userReqs);
+      }
+      userReqs.push(req);
     }
     return map;
   }, [requests]);
@@ -498,10 +502,17 @@ export default function CalendarGrid({
     const map = new Map<string, Map<string, CalendarShift[]>>();
     for (const s of shifts) {
       const dk = new Date(s.date).toISOString().slice(0, 10);
-      if (!map.has(s.userId)) map.set(s.userId, new Map());
-      const dm = map.get(s.userId)!;
-      if (!dm.has(dk)) dm.set(dk, []);
-      dm.get(dk)!.push(s);
+      let dm = map.get(s.userId);
+      if (!dm) {
+        dm = new Map();
+        map.set(s.userId, dm);
+      }
+      let daysMap = dm.get(dk);
+      if (!daysMap) {
+        daysMap = [];
+        dm.set(dk, daysMap);
+      }
+      daysMap.push(s);
     }
     return map;
   }, [shifts]);
@@ -511,10 +522,17 @@ export default function CalendarGrid({
     for (const req of requests) {
       for (const entry of req.entries) {
         const dk = new Date(entry.date).toISOString().slice(0, 10);
-        if (!map.has(req.user.id)) map.set(req.user.id, new Map());
-        const dm = map.get(req.user.id)!;
-        if (!dm.has(dk)) dm.set(dk, []);
-        dm.get(dk)!.push(req);
+        let dm = map.get(req.user.id);
+        if (!dm) {
+          dm = new Map();
+          map.set(req.user.id, dm);
+        }
+        let daysMap = dm.get(dk);
+        if (!daysMap) {
+          daysMap = [];
+          dm.set(dk, daysMap);
+        }
+        daysMap.push(req);
       }
     }
     return map;
@@ -529,7 +547,8 @@ export default function CalendarGrid({
         if (!dept.users.some((u) => u.id === req.user.id)) continue;
         for (const entry of req.entries) {
           const dk = new Date(entry.date).toISOString().slice(0, 10);
-          dm.set(dk, (dm.get(dk) ?? 0) + 1);
+          const currentCount = dm.get(dk);
+          dm.set(dk, (currentCount ?? 0) + 1);
         }
       }
       outer.set(dept.id, dm);
