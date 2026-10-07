@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, Fragment } from "react";
 import { format, isWeekend, getDaysInMonth } from "date-fns";
 import { da } from "date-fns/locale";
 import { ABSENCE_TYPE_LABELS, ABSENCE_TYPE_COLORS } from "@/lib/utils";
@@ -72,10 +72,17 @@ export function PrintCalendarView({
     for (const req of requests) {
       for (const entry of req.entries) {
         const dk = new Date(entry.date).toISOString().slice(0, 10);
-        if (!map.has(req.user.id)) map.set(req.user.id, new Map());
-        const dm = map.get(req.user.id)!;
-        if (!dm.has(dk)) dm.set(dk, []);
-        dm.get(dk)!.push(req);
+        let dm = map.get(req.user.id);
+        if (!dm) {
+          dm = new Map();
+          map.set(req.user.id, dm);
+        }
+        let daysMap = dm.get(dk);
+        if (!daysMap) {
+          daysMap = [];
+          dm.set(dk, daysMap);
+        }
+        daysMap.push(req);
       }
     }
     return map;
@@ -257,9 +264,9 @@ export function PrintCalendarView({
             const headerBg = color?.hex ?? "#334155";
 
             return (
-              <>
+              <Fragment key={`dept-${dept.id}`}>
                 {/* Dept header row */}
-                <tr key={`dept-${dept.id}`}>
+                <tr>
                   <td colSpan={daysInMonth + 1} style={{
                     background: headerBg,
                     color: "#fff",
@@ -366,7 +373,7 @@ export function PrintCalendarView({
                     </tr>
                   );
                 })}
-              </>
+              </Fragment>
             );
           })}
         </tbody>
