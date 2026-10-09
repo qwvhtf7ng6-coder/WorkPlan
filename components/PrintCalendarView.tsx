@@ -84,6 +84,17 @@ export function PrintCalendarView({
   const today = new Date();
   const todayKey = format(today, "yyyy-MM-dd");
 
+  // ⚡ Bolt Performance Optimization:
+  // Precomputing date formats here reduces expensive string parsing from O(Users * Days) down to O(Days).
+  // Expect faster render times for months with many employees.
+  const formattedDays = useMemo(() => days.map((d) => ({
+    date: d,
+    dk: format(d, "yyyy-MM-dd"),
+    weekend: isWeekend(d),
+    dayOfWeek: (d.getDay() + 6) % 7,
+    dayNum: d.getDate()
+  })), [days]);
+
   // Collect all absence types used this month for the legend
   const usedAbsenceTypes = useMemo(() => {
     const types = new Set<string>();
@@ -226,12 +237,9 @@ export function PrintCalendarView({
         <thead>
           <tr>
             <th style={S.thName}>Medarbejder</th>
-            {days.map((d, i) => {
-              const dk = format(d, "yyyy-MM-dd");
-              const weekend = isWeekend(d);
+            {formattedDays.map(({ dk, weekend, dayOfWeek, dayNum }, i) => {
               const holiday = holidayMap.has(dk);
               const isToday = dk === todayKey;
-              const dayOfWeek = (d.getDay() + 6) % 7; // Mon=0
               return (
                 <th key={dk} title={holidayMap.get(dk)} style={{
                   background: isToday ? "#2563eb" : holiday ? "#dc2626" : weekend ? "#374151" : "#1e3a5f",
@@ -243,7 +251,7 @@ export function PrintCalendarView({
                   borderRadius: i === daysInMonth - 1 ? "0 4px 0 0" : undefined,
                 }}>
                   <div style={{ fontSize: "9px", opacity: 0.7 }}>{DAY_INITIALS[dayOfWeek]}</div>
-                  <div style={{ fontSize: "13px", fontWeight: 800, lineHeight: 1.1 }}>{d.getDate()}</div>
+                  <div style={{ fontSize: "13px", fontWeight: 800, lineHeight: 1.1 }}>{dayNum}</div>
                   {holiday && <div style={{ fontSize: "7px", opacity: 0.9 }}>🎌</div>}
                 </th>
               );
@@ -309,12 +317,10 @@ export function PrintCalendarView({
                       </td>
 
                       {/* Day cells */}
-                      {days.map((d) => {
-                        const dk = format(d, "yyyy-MM-dd");
+                      {formattedDays.map(({ dk, weekend }) => {
                         const reqs = requestLookup.get(emp.id)?.get(dk) ?? [];
                         const approved = reqs.find((r) => r.status === "APPROVED");
                         const pending = reqs.find((r) => r.status === "PENDING") && isManagerOrAdmin;
-                        const weekend = isWeekend(d);
                         const holiday = holidayMap.has(dk);
                         const isToday = dk === todayKey;
 
