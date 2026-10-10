@@ -521,18 +521,43 @@ export default function CalendarGrid({
   }, [requests]);
 
   const deptCapacity = useMemo(() => {
-    const outer = new Map<string, Map<string, number>>();
+    // ⚡ Bolt Performance Optimization:
+    // What: Build a user-to-department lookup map (Map<string, string[]>) before aggregating requests.
+    // Why: Prevents an O(Departments * Requests * Users) nested array scan inside the loops.
+    // Impact: Reduces complexity to O(Users) + O(Requests * Entries), significantly improving render times for large datasets.
+    // Measurement: Faster re-renders of CalendarGrid when navigating or viewing many users/requests.
+    const userToDepts = new Map<string, string[]>();
     for (const dept of departments) {
-      const dm = new Map<string, number>();
-      for (const req of requests) {
-        if (req.status !== "APPROVED") continue;
-        if (!dept.users.some((u) => u.id === req.user.id)) continue;
-        for (const entry of req.entries) {
-          const dk = new Date(entry.date).toISOString().slice(0, 10);
+      for (const u of dept.users) {
+        const arr = userToDepts.get(u.id);
+        if (arr) {
+          arr.push(dept.id);
+        } else {
+          userToDepts.set(u.id, [dept.id]);
+        }
+      }
+    }
+
+    const outer = new Map<string, Map<string, number>>();
+    // Pre-populate maps for all departments
+    for (const dept of departments) {
+      outer.set(dept.id, new Map<string, number>());
+    }
+
+    for (const req of requests) {
+      if (req.status !== "APPROVED") continue;
+
+      const deptIds = userToDepts.get(req.user.id);
+      if (!deptIds || deptIds.length === 0) continue;
+
+      for (const entry of req.entries) {
+        const dk = new Date(entry.date).toISOString().slice(0, 10);
+
+        for (const deptId of deptIds) {
+          const dm = outer.get(deptId)!;
           dm.set(dk, (dm.get(dk) ?? 0) + 1);
         }
       }
-      outer.set(dept.id, dm);
     }
     return outer;
   }, [departments, requests]);
