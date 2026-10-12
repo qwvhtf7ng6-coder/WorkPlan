@@ -498,10 +498,17 @@ export default function CalendarGrid({
     const map = new Map<string, Map<string, CalendarShift[]>>();
     for (const s of shifts) {
       const dk = new Date(s.date).toISOString().slice(0, 10);
-      if (!map.has(s.userId)) map.set(s.userId, new Map());
-      const dm = map.get(s.userId)!;
-      if (!dm.has(dk)) dm.set(dk, []);
-      dm.get(dk)!.push(s);
+      let dm = map.get(s.userId);
+      if (!dm) {
+        dm = new Map();
+        map.set(s.userId, dm);
+      }
+      let dayShifts = dm.get(dk);
+      if (!dayShifts) {
+        dayShifts = [];
+        dm.set(dk, dayShifts);
+      }
+      dayShifts.push(s);
     }
     return map;
   }, [shifts]);
@@ -511,28 +518,53 @@ export default function CalendarGrid({
     for (const req of requests) {
       for (const entry of req.entries) {
         const dk = new Date(entry.date).toISOString().slice(0, 10);
-        if (!map.has(req.user.id)) map.set(req.user.id, new Map());
-        const dm = map.get(req.user.id)!;
-        if (!dm.has(dk)) dm.set(dk, []);
-        dm.get(dk)!.push(req);
+        let dm = map.get(req.user.id);
+        if (!dm) {
+          dm = new Map();
+          map.set(req.user.id, dm);
+        }
+        let dayReqs = dm.get(dk);
+        if (!dayReqs) {
+          dayReqs = [];
+          dm.set(dk, dayReqs);
+        }
+        dayReqs.push(req);
       }
     }
     return map;
   }, [requests]);
 
+  // Pre-compute user-to-department mapping to optimize capacity calculation from O(D*R*U) to O(D*U + R)
   const deptCapacity = useMemo(() => {
     const outer = new Map<string, Map<string, number>>();
+    const userDepts = new Map<string, string[]>();
+
+    // Pre-populate outer with empty maps for each department and build user-dept mapping
     for (const dept of departments) {
-      const dm = new Map<string, number>();
-      for (const req of requests) {
-        if (req.status !== "APPROVED") continue;
-        if (!dept.users.some((u) => u.id === req.user.id)) continue;
-        for (const entry of req.entries) {
-          const dk = new Date(entry.date).toISOString().slice(0, 10);
+      outer.set(dept.id, new Map<string, number>());
+      for (const u of dept.users) {
+        let depts = userDepts.get(u.id);
+        if (!depts) {
+          depts = [];
+          userDepts.set(u.id, depts);
+        }
+        depts.push(dept.id);
+      }
+    }
+
+    // Single pass through requests
+    for (const req of requests) {
+      if (req.status !== "APPROVED") continue;
+      const uDepts = userDepts.get(req.user.id);
+      if (!uDepts) continue;
+
+      for (const entry of req.entries) {
+        const dk = new Date(entry.date).toISOString().slice(0, 10);
+        for (const deptId of uDepts) {
+          const dm = outer.get(deptId)!;
           dm.set(dk, (dm.get(dk) ?? 0) + 1);
         }
       }
-      outer.set(dept.id, dm);
     }
     return outer;
   }, [departments, requests]);
