@@ -166,16 +166,24 @@ function CapacityDot({ count, max }: { count: number; max: number }) {
 
 // ─── Grid table ───────────────────────────────────────────────────────────────
 
+export interface FormattedDay {
+  date: Date;
+  dk: string;
+  weekend: boolean;
+  isToday: boolean;
+  dayNumber: string;
+  dayName: string;
+}
+
 function CalendarTable({
-  days, departments, holidayMap, requestLookup, deptCapacity, deptColorMap, todayKey, onOpenCell, isManagerOrAdmin, shiftLookup,
+  formattedDays, departments, holidayMap, requestLookup, deptCapacity, deptColorMap, onOpenCell, isManagerOrAdmin, shiftLookup,
 }: {
-  days: Date[];
+  formattedDays: FormattedDay[];
   departments: CalendarDepartment[];
   holidayMap: Map<string, string>;
   requestLookup: Map<string, Map<string, CalendarRequest[]>>;
   deptCapacity: Map<string, Map<string, number>>;
   deptColorMap: Map<string, DeptColor>;
-  todayKey: string;
   onOpenCell: (dk: string, user: CalendarUser, reqs: CalendarRequest[], shifts: CalendarShift[]) => void;
   isManagerOrAdmin?: boolean;
   shiftLookup: Map<string, Map<string, CalendarShift[]>>;
@@ -191,11 +199,9 @@ function CalendarTable({
           >
             Medarbejder
           </th>
-          {days.map((d) => {
-            const dk = format(d, "yyyy-MM-dd");
+          {formattedDays.map((fd) => {
+            const { dk, weekend, isToday, dayNumber, dayName } = fd;
             const holiday = holidayMap.get(dk);
-            const weekend = isWeekend(d);
-            const isToday = dk === todayKey;
             return (
               <th
                 key={dk}
@@ -222,8 +228,8 @@ function CalendarTable({
                     : "var(--c-text-muted)",
                 }}
               >
-                <div className="font-bold text-[12px]">{format(d, "d")}</div>
-                <div className="text-[9px] uppercase opacity-70">{format(d, "EEEEE", { locale: da })}</div>
+                <div className="font-bold text-[12px]">{dayNumber}</div>
+                <div className="text-[9px] uppercase opacity-70">{dayName}</div>
                 {holiday && <div className="text-[8px] leading-tight">🎌</div>}
               </th>
             );
@@ -247,10 +253,9 @@ function CalendarTable({
                 >
                   {dept.name}
                 </td>
-                {days.map((d) => {
-                  const dk = format(d, "yyyy-MM-dd");
+                {formattedDays.map((fd) => {
+                  const { dk, weekend } = fd;
                   const count = capacityMap.get(dk) ?? 0;
-                  const weekend = isWeekend(d);
                   const holiday = holidayMap.has(dk);
                   return (
                     <td key={dk} className="border-b border-r text-center py-0.5"
@@ -279,13 +284,12 @@ function CalendarTable({
                       {emp.name}
                     </span>
                   </td>
-                  {days.map((d) => {
-                    const dk = format(d, "yyyy-MM-dd");
+                  {formattedDays.map((fd) => {
+                    const { dk, weekend } = fd;
                     const reqs = requestLookup.get(emp.id)?.get(dk) ?? [];
                     const cellShifts = dept.shiftsEnabled
                       ? (shiftLookup.get(emp.id)?.get(dk) ?? [])
                       : [];
-                    const weekend = isWeekend(d);
                     const holiday = holidayMap.has(dk);
                     const hasApproved = reqs.some((r) => r.status === "APPROVED");
                     const hasPending = reqs.some((r) => r.status === "PENDING") && !!isManagerOrAdmin;
@@ -492,47 +496,96 @@ export default function CalendarGrid({
   const weekDays  = useMemo(() => eachDayOfInterval({ start: startOfWeek(weekStart, { weekStartsOn: 1 }), end: endOfWeek(weekStart, { weekStartsOn: 1 }) }), [weekStart]);
   const days = viewMode === "month" ? monthDays : weekDays;
 
+  // Performance: Precompute formatted day data to avoid calling format() repeatedly in nested render loops
+  const formattedDays = useMemo(() => days.map((d) => {
+    const dk = format(d, "yyyy-MM-dd");
+    return {
+      date: d,
+      dk,
+      weekend: isWeekend(d),
+      isToday: dk === todayKey,
+      dayNumber: format(d, "d"),
+      dayName: format(d, "EEEEE", { locale: da }),
+    };
+  }), [days, todayKey]);
+
   const holidayMap = useMemo(() => new Map<string, string>(holidays.map((h) => [new Date(h.date).toISOString().slice(0, 10), h.name])), [holidays]);
 
+  // Performance: Optimize Map population to reduce lookup overhead
   const shiftLookup = useMemo(() => {
     const map = new Map<string, Map<string, CalendarShift[]>>();
     for (const s of shifts) {
       const dk = new Date(s.date).toISOString().slice(0, 10);
-      if (!map.has(s.userId)) map.set(s.userId, new Map());
-      const dm = map.get(s.userId)!;
-      if (!dm.has(dk)) dm.set(dk, []);
-      dm.get(dk)!.push(s);
+      let dm = map.get(s.userId);
+      if (!dm) {
+        dm = new Map();
+        map.set(s.userId, dm);
+      }
+      let arr = dm.get(dk);
+      if (!arr) {
+        arr = [];
+        dm.set(dk, arr);
+      }
+      arr.push(s);
     }
     return map;
   }, [shifts]);
 
+  // Performance: Optimize Map population to reduce lookup overhead
   const requestLookup = useMemo(() => {
     const map = new Map<string, Map<string, CalendarRequest[]>>();
     for (const req of requests) {
+      let dm = map.get(req.user.id);
+      if (!dm) {
+        dm = new Map();
+        map.set(req.user.id, dm);
+      }
       for (const entry of req.entries) {
         const dk = new Date(entry.date).toISOString().slice(0, 10);
-        if (!map.has(req.user.id)) map.set(req.user.id, new Map());
-        const dm = map.get(req.user.id)!;
-        if (!dm.has(dk)) dm.set(dk, []);
-        dm.get(dk)!.push(req);
+        let arr = dm.get(dk);
+        if (!arr) {
+          arr = [];
+          dm.set(dk, arr);
+        }
+        arr.push(req);
       }
     }
     return map;
   }, [requests]);
 
+  // Performance: Map user IDs to department IDs to avoid O(D * R) loop
   const deptCapacity = useMemo(() => {
+    const userToDepts = new Map<string, string[]>();
+    for (const dept of departments) {
+      for (const u of dept.users) {
+        let depts = userToDepts.get(u.id);
+        if (!depts) {
+          depts = [];
+          userToDepts.set(u.id, depts);
+        }
+        depts.push(dept.id);
+      }
+    }
+
     const outer = new Map<string, Map<string, number>>();
     for (const dept of departments) {
-      const dm = new Map<string, number>();
-      for (const req of requests) {
-        if (req.status !== "APPROVED") continue;
-        if (!dept.users.some((u) => u.id === req.user.id)) continue;
-        for (const entry of req.entries) {
-          const dk = new Date(entry.date).toISOString().slice(0, 10);
-          dm.set(dk, (dm.get(dk) ?? 0) + 1);
+      outer.set(dept.id, new Map<string, number>());
+    }
+
+    for (const req of requests) {
+      if (req.status !== "APPROVED") continue;
+      const userDepts = userToDepts.get(req.user.id);
+      if (!userDepts) continue;
+
+      for (const entry of req.entries) {
+        const dk = new Date(entry.date).toISOString().slice(0, 10);
+        for (const deptId of userDepts) {
+          const dm = outer.get(deptId);
+          if (dm) {
+            dm.set(dk, (dm.get(dk) ?? 0) + 1);
+          }
         }
       }
-      outer.set(dept.id, dm);
     }
     return outer;
   }, [departments, requests]);
@@ -653,13 +706,12 @@ export default function CalendarGrid({
           className="overflow-auto border border-border rounded-lg shadow-xs"
           style={{ maxHeight: "calc(100vh - 240px)" }}>
           <CalendarTable
-            days={days}
+            formattedDays={formattedDays}
             departments={filteredDepartments}
             holidayMap={holidayMap}
             requestLookup={requestLookup}
             deptCapacity={deptCapacity}
             deptColorMap={deptColorMap}
-            todayKey={todayKey}
             onOpenCell={(dk, user, reqs, cellShifts) => setCellModal({ dateKey: dk, user, requests: reqs, holidayName: holidayMap.get(dk) ?? null, shifts: cellShifts })}
             isManagerOrAdmin={isManagerOrAdmin}
             shiftLookup={shiftLookup}
