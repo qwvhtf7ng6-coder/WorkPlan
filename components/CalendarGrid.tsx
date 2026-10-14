@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useMemo } from "react";
+import { useState, useRef, useMemo, Fragment } from "react";
 import { useRouter } from "next/navigation";
 import {
   format, isWeekend, getISOWeek,
@@ -238,7 +238,7 @@ function CalendarTable({
           const cellBg = color?.hexLight ?? "#bbf7d0";
 
           return (
-            <>
+            <Fragment key={dept.id}>
               {/* Dept header row */}
               <tr key={`dept-${dept.id}`}>
                 <td
@@ -346,7 +346,7 @@ function CalendarTable({
                   })}
                 </tr>
               ))}
-            </>
+            </Fragment>
           );
         })}
       </tbody>
@@ -521,18 +521,35 @@ export default function CalendarGrid({
   }, [requests]);
 
   const deptCapacity = useMemo(() => {
-    const outer = new Map<string, Map<string, number>>();
+    // Optimization: Create a lookup map for user-to-departments to avoid O(D * R * U) nested loop overhead
+    // Impact: Reduces complexity to O(D * U + R), improving rendering performance of the grid significantly
+    // when scaling up users and requests.
+    const userToDepts = new Map<string, string[]>();
     for (const dept of departments) {
-      const dm = new Map<string, number>();
-      for (const req of requests) {
-        if (req.status !== "APPROVED") continue;
-        if (!dept.users.some((u) => u.id === req.user.id)) continue;
+      for (const u of dept.users) {
+        if (!userToDepts.has(u.id)) userToDepts.set(u.id, []);
+        userToDepts.get(u.id)!.push(dept.id);
+      }
+    }
+
+    const outer = new Map<string, Map<string, number>>();
+    // Pre-populate outer with all department IDs
+    for (const dept of departments) {
+      outer.set(dept.id, new Map<string, number>());
+    }
+
+    for (const req of requests) {
+      if (req.status !== "APPROVED") continue;
+      const uDepts = userToDepts.get(req.user.id);
+      if (!uDepts || uDepts.length === 0) continue;
+
+      for (const deptId of uDepts) {
+        const dm = outer.get(deptId)!;
         for (const entry of req.entries) {
           const dk = new Date(entry.date).toISOString().slice(0, 10);
           dm.set(dk, (dm.get(dk) ?? 0) + 1);
         }
       }
-      outer.set(dept.id, dm);
     }
     return outer;
   }, [departments, requests]);
