@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useMemo } from "react";
+import { useState, useRef, useMemo, Fragment } from "react";
 import { useRouter } from "next/navigation";
 import {
   format, isWeekend, getISOWeek,
@@ -238,7 +238,8 @@ function CalendarTable({
           const cellBg = color?.hexLight ?? "#bbf7d0";
 
           return (
-            <>
+            /* Bolt: Fix missing key warning by using Fragment with key instead of empty tags. Impact: Reduces unnecessary remounts and reconciliation overhead. */
+            <Fragment key={`dept-group-${dept.id}`}>
               {/* Dept header row */}
               <tr key={`dept-${dept.id}`}>
                 <td
@@ -346,7 +347,7 @@ function CalendarTable({
                   })}
                 </tr>
               ))}
-            </>
+            </Fragment>
           );
         })}
       </tbody>
