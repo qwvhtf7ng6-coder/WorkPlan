@@ -1,0 +1,3 @@
+## 2024-05-18 - Hoisting Map Initialization Outside Nested Loops
+**Learning:** When generating nested lookups (e.g., `Map<UserId, Map<Date, Data>>`) by iterating through an array of objects that themselves contain arrays (e.g., requests containing multiple date entries), performing the outer Map lookup/initialization (for `UserId`) inside the inner loop is highly inefficient.
+**Action:** Always hoist the outer Map lookup and initialization (e.g., `let userMap = map.get(req.user.id); if (!userMap) { ... }`) to the outer loop scope, immediately before the inner loop begins. This reduces the outer Map operations from O(Requests * Entries) down to O(Requests).
