@@ -495,44 +495,79 @@ export default function CalendarGrid({
   const holidayMap = useMemo(() => new Map<string, string>(holidays.map((h) => [new Date(h.date).toISOString().slice(0, 10), h.name])), [holidays]);
 
   const shiftLookup = useMemo(() => {
+    // ⚡ Bolt: Optimize map population by using truthiness checks instead of has() + get() (Halves hash lookup overhead)
     const map = new Map<string, Map<string, CalendarShift[]>>();
     for (const s of shifts) {
       const dk = new Date(s.date).toISOString().slice(0, 10);
-      if (!map.has(s.userId)) map.set(s.userId, new Map());
-      const dm = map.get(s.userId)!;
-      if (!dm.has(dk)) dm.set(dk, []);
-      dm.get(dk)!.push(s);
+      let userMap = map.get(s.userId);
+      if (!userMap) {
+        userMap = new Map();
+        map.set(s.userId, userMap);
+      }
+      let dayArr = userMap.get(dk);
+      if (!dayArr) {
+        dayArr = [];
+        userMap.set(dk, dayArr);
+      }
+      dayArr.push(s);
     }
     return map;
   }, [shifts]);
 
   const requestLookup = useMemo(() => {
+    // ⚡ Bolt: Optimize nested mapping by hoisting outer map lookup, and using truthiness checks
     const map = new Map<string, Map<string, CalendarRequest[]>>();
     for (const req of requests) {
+      // Hoist user map lookup outside the entries loop
+      let userMap = map.get(req.user.id);
+      if (!userMap) {
+        userMap = new Map();
+        map.set(req.user.id, userMap);
+      }
       for (const entry of req.entries) {
         const dk = new Date(entry.date).toISOString().slice(0, 10);
-        if (!map.has(req.user.id)) map.set(req.user.id, new Map());
-        const dm = map.get(req.user.id)!;
-        if (!dm.has(dk)) dm.set(dk, []);
-        dm.get(dk)!.push(req);
+        let dayArr = userMap.get(dk);
+        if (!dayArr) {
+          dayArr = [];
+          userMap.set(dk, dayArr);
+        }
+        dayArr.push(req);
       }
     }
     return map;
   }, [requests]);
 
   const deptCapacity = useMemo(() => {
+    // ⚡ Bolt: Optimize capacity loop from O(D * R * U * E) to O(D * U + R * E) by building a user-to-dept Map first
     const outer = new Map<string, Map<string, number>>();
+    const userToDepts = new Map<string, string[]>();
+
+    // Pre-populate empty maps for every department to maintain exact return contracts
     for (const dept of departments) {
-      const dm = new Map<string, number>();
-      for (const req of requests) {
-        if (req.status !== "APPROVED") continue;
-        if (!dept.users.some((u) => u.id === req.user.id)) continue;
+      outer.set(dept.id, new Map<string, number>());
+      for (const u of dept.users) {
+        let depts = userToDepts.get(u.id);
+        if (!depts) {
+          depts = [];
+          userToDepts.set(u.id, depts);
+        }
+        depts.push(dept.id);
+      }
+    }
+
+    for (const req of requests) {
+      if (req.status !== "APPROVED") continue;
+
+      const depts = userToDepts.get(req.user.id);
+      if (!depts) continue; // user not in any department
+
+      for (const deptId of depts) {
+        const dm = outer.get(deptId)!;
         for (const entry of req.entries) {
           const dk = new Date(entry.date).toISOString().slice(0, 10);
           dm.set(dk, (dm.get(dk) ?? 0) + 1);
         }
       }
-      outer.set(dept.id, dm);
     }
     return outer;
   }, [departments, requests]);
