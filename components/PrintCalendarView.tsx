@@ -69,13 +69,21 @@ export function PrintCalendarView({
 
   const requestLookup = useMemo(() => {
     const map = new Map<string, Map<string, PrintRequest[]>>();
+    // Optimized: Hoisted outer map lookup and replaced .has() with truthiness check
     for (const req of requests) {
+      let dm = map.get(req.user.id);
+      if (!dm) {
+        dm = new Map();
+        map.set(req.user.id, dm);
+      }
       for (const entry of req.entries) {
         const dk = new Date(entry.date).toISOString().slice(0, 10);
-        if (!map.has(req.user.id)) map.set(req.user.id, new Map());
-        const dm = map.get(req.user.id)!;
-        if (!dm.has(dk)) dm.set(dk, []);
-        dm.get(dk)!.push(req);
+        let arr = dm.get(dk);
+        if (!arr) {
+          arr = [];
+          dm.set(dk, arr);
+        }
+        arr.push(req);
       }
     }
     return map;

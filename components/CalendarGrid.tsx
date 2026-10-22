@@ -362,9 +362,14 @@ function MobileCalendarList({
   const holidayMap = useMemo(() => new Map<string, string>(holidays.map((h) => [new Date(h.date).toISOString().slice(0, 10), h.name])), [holidays]);
   const requestsByUser = useMemo(() => {
     const map = new Map<string, CalendarRequest[]>();
+    // Optimized: Storing Map.get() result and checking truthiness to halve map lookup overhead
     for (const req of requests) {
-      if (!map.has(req.user.id)) map.set(req.user.id, []);
-      map.get(req.user.id)!.push(req);
+      let arr = map.get(req.user.id);
+      if (!arr) {
+        arr = [];
+        map.set(req.user.id, arr);
+      }
+      arr.push(req);
     }
     return map;
   }, [requests]);
@@ -496,25 +501,41 @@ export default function CalendarGrid({
 
   const shiftLookup = useMemo(() => {
     const map = new Map<string, Map<string, CalendarShift[]>>();
+    // Optimized: Storing Map.get() result and checking truthiness to halve map lookup overhead
     for (const s of shifts) {
       const dk = new Date(s.date).toISOString().slice(0, 10);
-      if (!map.has(s.userId)) map.set(s.userId, new Map());
-      const dm = map.get(s.userId)!;
-      if (!dm.has(dk)) dm.set(dk, []);
-      dm.get(dk)!.push(s);
+      let dm = map.get(s.userId);
+      if (!dm) {
+        dm = new Map();
+        map.set(s.userId, dm);
+      }
+      let arr = dm.get(dk);
+      if (!arr) {
+        arr = [];
+        dm.set(dk, arr);
+      }
+      arr.push(s);
     }
     return map;
   }, [shifts]);
 
   const requestLookup = useMemo(() => {
     const map = new Map<string, Map<string, CalendarRequest[]>>();
+    // Optimized: Hoisted outer map lookup and replaced .has() with truthiness check
     for (const req of requests) {
+      let dm = map.get(req.user.id);
+      if (!dm) {
+        dm = new Map();
+        map.set(req.user.id, dm);
+      }
       for (const entry of req.entries) {
         const dk = new Date(entry.date).toISOString().slice(0, 10);
-        if (!map.has(req.user.id)) map.set(req.user.id, new Map());
-        const dm = map.get(req.user.id)!;
-        if (!dm.has(dk)) dm.set(dk, []);
-        dm.get(dk)!.push(req);
+        let arr = dm.get(dk);
+        if (!arr) {
+          arr = [];
+          dm.set(dk, arr);
+        }
+        arr.push(req);
       }
     }
     return map;
