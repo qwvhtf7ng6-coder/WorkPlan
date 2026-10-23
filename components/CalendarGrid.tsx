@@ -494,39 +494,63 @@ export default function CalendarGrid({
 
   const holidayMap = useMemo(() => new Map<string, string>(holidays.map((h) => [new Date(h.date).toISOString().slice(0, 10), h.name])), [holidays]);
 
+  // Performance optimization: Combine map lookup and truthiness check, hoist outer map lookup
+  // Impact: Halves the map lookup overhead and avoids redundant 'has' checks for 'shiftLookup'
   const shiftLookup = useMemo(() => {
     const map = new Map<string, Map<string, CalendarShift[]>>();
     for (const s of shifts) {
+      let dm = map.get(s.userId);
+      if (!dm) {
+        dm = new Map();
+        map.set(s.userId, dm);
+      }
       const dk = new Date(s.date).toISOString().slice(0, 10);
-      if (!map.has(s.userId)) map.set(s.userId, new Map());
-      const dm = map.get(s.userId)!;
-      if (!dm.has(dk)) dm.set(dk, []);
-      dm.get(dk)!.push(s);
+      let dayShifts = dm.get(dk);
+      if (!dayShifts) {
+        dayShifts = [];
+        dm.set(dk, dayShifts);
+      }
+      dayShifts.push(s);
     }
     return map;
   }, [shifts]);
 
+  // Performance optimization: Hoist outer map lookup/initialization outside the inner loop
+  // Impact: Halves the map lookup overhead and avoids redundant 'has' checks for 'requestLookup'
   const requestLookup = useMemo(() => {
     const map = new Map<string, Map<string, CalendarRequest[]>>();
     for (const req of requests) {
+      let dm = map.get(req.user.id);
+      if (!dm) {
+        dm = new Map();
+        map.set(req.user.id, dm);
+      }
       for (const entry of req.entries) {
         const dk = new Date(entry.date).toISOString().slice(0, 10);
-        if (!map.has(req.user.id)) map.set(req.user.id, new Map());
-        const dm = map.get(req.user.id)!;
-        if (!dm.has(dk)) dm.set(dk, []);
-        dm.get(dk)!.push(req);
+        let dayReqs = dm.get(dk);
+        if (!dayReqs) {
+          dayReqs = [];
+          dm.set(dk, dayReqs);
+        }
+        dayReqs.push(req);
       }
     }
     return map;
   }, [requests]);
 
+  // Performance optimization: Pre-filter approved requests outside the main department loop
+  // Impact: Reduces O(D * R) complexity down to O(R) + O(D * R_filtered), and replaces a linear `.some` array scan with a constant-time `Set.has` lookup.
   const deptCapacity = useMemo(() => {
     const outer = new Map<string, Map<string, number>>();
+    const approvedRequests = requests.filter((req) => req.status === "APPROVED");
+
     for (const dept of departments) {
       const dm = new Map<string, number>();
-      for (const req of requests) {
-        if (req.status !== "APPROVED") continue;
-        if (!dept.users.some((u) => u.id === req.user.id)) continue;
+      // Create a set of user IDs for faster lookup
+      const deptUserIds = new Set(dept.users.map(u => u.id));
+
+      for (const req of approvedRequests) {
+        if (!deptUserIds.has(req.user.id)) continue;
         for (const entry of req.entries) {
           const dk = new Date(entry.date).toISOString().slice(0, 10);
           dm.set(dk, (dm.get(dk) ?? 0) + 1);
