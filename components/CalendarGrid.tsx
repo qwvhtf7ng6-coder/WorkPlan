@@ -360,11 +360,16 @@ function MobileCalendarList({
   year, month, departments, requests, holidays, onNavigate, deptColorMap,
 }: CalendarGridProps & { onNavigate: (delta: number) => void; deptColorMap: Map<string, DeptColor> }) {
   const holidayMap = useMemo(() => new Map<string, string>(holidays.map((h) => [new Date(h.date).toISOString().slice(0, 10), h.name])), [holidays]);
+  // ⚡ Bolt: Cached Map.get to halve map lookup overhead
   const requestsByUser = useMemo(() => {
     const map = new Map<string, CalendarRequest[]>();
     for (const req of requests) {
-      if (!map.has(req.user.id)) map.set(req.user.id, []);
-      map.get(req.user.id)!.push(req);
+      let userReqs = map.get(req.user.id);
+      if (!userReqs) {
+        userReqs = [];
+        map.set(req.user.id, userReqs);
+      }
+      userReqs.push(req);
     }
     return map;
   }, [requests]);
@@ -494,45 +499,77 @@ export default function CalendarGrid({
 
   const holidayMap = useMemo(() => new Map<string, string>(holidays.map((h) => [new Date(h.date).toISOString().slice(0, 10), h.name])), [holidays]);
 
+  // ⚡ Bolt: Cached Map.get to halve map lookup overhead
   const shiftLookup = useMemo(() => {
     const map = new Map<string, Map<string, CalendarShift[]>>();
     for (const s of shifts) {
       const dk = new Date(s.date).toISOString().slice(0, 10);
-      if (!map.has(s.userId)) map.set(s.userId, new Map());
-      const dm = map.get(s.userId)!;
-      if (!dm.has(dk)) dm.set(dk, []);
-      dm.get(dk)!.push(s);
+      let dm = map.get(s.userId);
+      if (!dm) {
+        dm = new Map();
+        map.set(s.userId, dm);
+      }
+      let dayShifts = dm.get(dk);
+      if (!dayShifts) {
+        dayShifts = [];
+        dm.set(dk, dayShifts);
+      }
+      dayShifts.push(s);
     }
     return map;
   }, [shifts]);
 
+  // ⚡ Bolt: Hoisted outer map lookup out of inner array iteration and cached Map.get evaluations
   const requestLookup = useMemo(() => {
     const map = new Map<string, Map<string, CalendarRequest[]>>();
     for (const req of requests) {
+      let dm = map.get(req.user.id);
+      if (!dm) {
+        dm = new Map();
+        map.set(req.user.id, dm);
+      }
       for (const entry of req.entries) {
         const dk = new Date(entry.date).toISOString().slice(0, 10);
-        if (!map.has(req.user.id)) map.set(req.user.id, new Map());
-        const dm = map.get(req.user.id)!;
-        if (!dm.has(dk)) dm.set(dk, []);
-        dm.get(dk)!.push(req);
+        let dayReqs = dm.get(dk);
+        if (!dayReqs) {
+          dayReqs = [];
+          dm.set(dk, dayReqs);
+        }
+        dayReqs.push(req);
       }
     }
     return map;
   }, [requests]);
 
+  // ⚡ Bolt: Optimized array iterations from O(D * R * U * E) to use a precomputed reverse lookup map
   const deptCapacity = useMemo(() => {
     const outer = new Map<string, Map<string, number>>();
+    // Build reverse lookup mapping user ID to array of department IDs
+    const userToDepts = new Map<string, string[]>();
     for (const dept of departments) {
-      const dm = new Map<string, number>();
-      for (const req of requests) {
-        if (req.status !== "APPROVED") continue;
-        if (!dept.users.some((u) => u.id === req.user.id)) continue;
+      outer.set(dept.id, new Map()); // Initialize capacity map for every department
+      for (const u of dept.users) {
+        let depts = userToDepts.get(u.id);
+        if (!depts) {
+          depts = [];
+          userToDepts.set(u.id, depts);
+        }
+        depts.push(dept.id);
+      }
+    }
+
+    for (const req of requests) {
+      if (req.status !== "APPROVED") continue;
+      const deptIds = userToDepts.get(req.user.id);
+      if (!deptIds) continue; // User not in any relevant department
+
+      for (const deptId of deptIds) {
+        const dm = outer.get(deptId)!;
         for (const entry of req.entries) {
           const dk = new Date(entry.date).toISOString().slice(0, 10);
           dm.set(dk, (dm.get(dk) ?? 0) + 1);
         }
       }
-      outer.set(dept.id, dm);
     }
     return outer;
   }, [departments, requests]);

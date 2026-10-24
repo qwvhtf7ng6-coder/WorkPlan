@@ -56,15 +56,23 @@ function PrintGrid({
     holidays.map((h) => [new Date(h.date).toISOString().slice(0, 10), h.name])
   ), [holidays]);
 
+  // ⚡ Bolt: Hoisted outer map lookup out of inner array iteration and cached Map.get evaluations
   const requestLookup = useMemo(() => {
     const map = new Map<string, Map<string, PrintRequest[]>>();
     for (const req of requests) {
+      let dm = map.get(req.user.id);
+      if (!dm) {
+        dm = new Map();
+        map.set(req.user.id, dm);
+      }
       for (const entry of req.entries) {
         const dk = new Date(entry.date).toISOString().slice(0, 10);
-        if (!map.has(req.user.id)) map.set(req.user.id, new Map());
-        const dm = map.get(req.user.id)!;
-        if (!dm.has(dk)) dm.set(dk, []);
-        dm.get(dk)!.push(req);
+        let dayReqs = dm.get(dk);
+        if (!dayReqs) {
+          dayReqs = [];
+          dm.set(dk, dayReqs);
+        }
+        dayReqs.push(req);
       }
     }
     return map;
