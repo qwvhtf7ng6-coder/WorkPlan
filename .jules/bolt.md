@@ -1,0 +1,3 @@
+## 2023-10-24 - Optimizing deeply nested O(N) array scans inside React hooks
+**Learning:** Calling `.some()` or `.find()` inside deeply nested loops (e.g., iterating entries within requests within departments) drastically inflates algorithmic complexity, especially when executed synchronously within a React `useMemo` block that delays rendering on large datasets.
+**Action:** Always extract inner array scans and transform them into a reverse-lookup Map (e.g., mapping user IDs to an array of associated department IDs) *before* executing the primary loops. This reduces lookup time from O(N) to O(1) and flattens the nested complexity.
