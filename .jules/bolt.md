@@ -1,0 +1,3 @@
+## 2024-03-24 - CalendarGrid Performance Optimization
+**Learning:** In React grid or table components, avoid executing iterative array methods (like `.some()` or `.find()`) inside nested loops representing rows and columns (e.g., O(Departments * Requests) or O(Users * Days)). Precompute this static column data into Maps or Arrays using `useMemo` to reduce calculation overhead.
+**Action:** Always pre-calculate and pre-map relational data outside of render loops. When populating nested Maps (e.g., Map<string, Map<string, Array>>), optimize by storing the result of Map.get(key) in a variable and checking its truthiness instead of executing sequential Map.has(key) and Map.get(key) calls.
