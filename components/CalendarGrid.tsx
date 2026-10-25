@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useMemo } from "react";
+import { useState, useRef, useMemo, Fragment } from "react";
 import { useRouter } from "next/navigation";
 import {
   format, isWeekend, getISOWeek,
@@ -238,7 +238,7 @@ function CalendarTable({
           const cellBg = color?.hexLight ?? "#bbf7d0";
 
           return (
-            <>
+            <Fragment key={dept.id}>
               {/* Dept header row */}
               <tr key={`dept-${dept.id}`}>
                 <td
@@ -346,7 +346,7 @@ function CalendarTable({
                   })}
                 </tr>
               ))}
-            </>
+            </Fragment>
           );
         })}
       </tbody>
@@ -494,45 +494,78 @@ export default function CalendarGrid({
 
   const holidayMap = useMemo(() => new Map<string, string>(holidays.map((h) => [new Date(h.date).toISOString().slice(0, 10), h.name])), [holidays]);
 
+  // Optimized: Store Map.get result to avoid sequential Map.has + Map.get calls
   const shiftLookup = useMemo(() => {
     const map = new Map<string, Map<string, CalendarShift[]>>();
     for (const s of shifts) {
       const dk = new Date(s.date).toISOString().slice(0, 10);
-      if (!map.has(s.userId)) map.set(s.userId, new Map());
-      const dm = map.get(s.userId)!;
-      if (!dm.has(dk)) dm.set(dk, []);
-      dm.get(dk)!.push(s);
+      let dm = map.get(s.userId);
+      if (!dm) {
+        dm = new Map();
+        map.set(s.userId, dm);
+      }
+      let dayShifts = dm.get(dk);
+      if (!dayShifts) {
+        dayShifts = [];
+        dm.set(dk, dayShifts);
+      }
+      dayShifts.push(s);
     }
     return map;
   }, [shifts]);
 
+  // Optimized: Hoisted user map lookup outside entries loop and optimized Map calls
   const requestLookup = useMemo(() => {
     const map = new Map<string, Map<string, CalendarRequest[]>>();
     for (const req of requests) {
+      let dm = map.get(req.user.id);
+      if (!dm) {
+        dm = new Map();
+        map.set(req.user.id, dm);
+      }
       for (const entry of req.entries) {
         const dk = new Date(entry.date).toISOString().slice(0, 10);
-        if (!map.has(req.user.id)) map.set(req.user.id, new Map());
-        const dm = map.get(req.user.id)!;
-        if (!dm.has(dk)) dm.set(dk, []);
-        dm.get(dk)!.push(req);
+        let entriesArr = dm.get(dk);
+        if (!entriesArr) {
+          entriesArr = [];
+          dm.set(dk, entriesArr);
+        }
+        entriesArr.push(req);
       }
     }
     return map;
   }, [requests]);
 
+  // Optimized: Replaced O(D * R) nested array `.some()` checks with O(1) Map lookups
   const deptCapacity = useMemo(() => {
     const outer = new Map<string, Map<string, number>>();
+    const userToDepts = new Map<string, string[]>();
+
+    // Pre-populate Maps to avoid redundant initialization
     for (const dept of departments) {
-      const dm = new Map<string, number>();
-      for (const req of requests) {
-        if (req.status !== "APPROVED") continue;
-        if (!dept.users.some((u) => u.id === req.user.id)) continue;
+      outer.set(dept.id, new Map<string, number>());
+      for (const u of dept.users) {
+        let depts = userToDepts.get(u.id);
+        if (!depts) {
+          depts = [];
+          userToDepts.set(u.id, depts);
+        }
+        depts.push(dept.id);
+      }
+    }
+
+    for (const req of requests) {
+      if (req.status !== "APPROVED") continue;
+      const deptIds = userToDepts.get(req.user.id);
+      if (!deptIds) continue;
+
+      for (const deptId of deptIds) {
+        const dm = outer.get(deptId)!;
         for (const entry of req.entries) {
           const dk = new Date(entry.date).toISOString().slice(0, 10);
           dm.set(dk, (dm.get(dk) ?? 0) + 1);
         }
       }
-      outer.set(dept.id, dm);
     }
     return outer;
   }, [departments, requests]);
