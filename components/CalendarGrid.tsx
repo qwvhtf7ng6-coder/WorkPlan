@@ -521,19 +521,43 @@ export default function CalendarGrid({
   }, [requests]);
 
   const deptCapacity = useMemo(() => {
+    // ⚡ Bolt: Replaced O(D*R*U) nested loop with O(D+R) mapping lookup.
+    // 1) Precompute User ID -> Department IDs mapping
+    const userToDepts = new Map<string, string[]>();
     const outer = new Map<string, Map<string, number>>();
+
     for (const dept of departments) {
-      const dm = new Map<string, number>();
-      for (const req of requests) {
-        if (req.status !== "APPROVED") continue;
-        if (!dept.users.some((u) => u.id === req.user.id)) continue;
-        for (const entry of req.entries) {
-          const dk = new Date(entry.date).toISOString().slice(0, 10);
+      outer.set(dept.id, new Map<string, number>());
+      for (const user of dept.users) {
+        let depts = userToDepts.get(user.id);
+        if (!depts) {
+          depts = [];
+          userToDepts.set(user.id, depts);
+        }
+        depts.push(dept.id);
+      }
+    }
+
+    // 2) Process requests once, incrementing capacity for all associated departments
+    for (const req of requests) {
+      if (req.status !== "APPROVED") continue;
+
+      const userDepts = userToDepts.get(req.user.id);
+      if (!userDepts) continue;
+
+      for (const entry of req.entries) {
+        // Handle potentially different string or Date formats correctly
+        const dk = typeof entry.date === "string" && entry.date.length <= 10
+          ? entry.date
+          : new Date(entry.date).toISOString().slice(0, 10);
+
+        for (const deptId of userDepts) {
+          const dm = outer.get(deptId)!;
           dm.set(dk, (dm.get(dk) ?? 0) + 1);
         }
       }
-      outer.set(dept.id, dm);
     }
+
     return outer;
   }, [departments, requests]);
 
