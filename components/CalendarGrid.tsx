@@ -520,19 +520,43 @@ export default function CalendarGrid({
     return map;
   }, [requests]);
 
+  // ⚡ Bolt: Precomputed user-department mappings to avoid O(N^3) nested loops.
+  // Reduces time complexity from O(D * R * E) to O(D * U + R * E * d).
   const deptCapacity = useMemo(() => {
     const outer = new Map<string, Map<string, number>>();
+
+    // Pre-populate expected department keys to maintain the contract
     for (const dept of departments) {
-      const dm = new Map<string, number>();
-      for (const req of requests) {
-        if (req.status !== "APPROVED") continue;
-        if (!dept.users.some((u) => u.id === req.user.id)) continue;
-        for (const entry of req.entries) {
-          const dk = new Date(entry.date).toISOString().slice(0, 10);
-          dm.set(dk, (dm.get(dk) ?? 0) + 1);
+      outer.set(dept.id, new Map<string, number>());
+    }
+
+    // Precompute user-to-department relationships functionally handling multiple departments
+    const userDepts = new Map<string, string[]>();
+    for (const dept of departments) {
+      for (const user of dept.users) {
+        let depts = userDepts.get(user.id);
+        if (!depts) {
+          depts = [];
+          userDepts.set(user.id, depts);
+        }
+        depts.push(dept.id);
+      }
+    }
+
+    for (const req of requests) {
+      if (req.status !== "APPROVED") continue;
+      const deptsForUser = userDepts.get(req.user.id);
+      if (!deptsForUser) continue;
+
+      for (const entry of req.entries) {
+        const dk = new Date(entry.date).toISOString().slice(0, 10);
+        for (const deptId of deptsForUser) {
+          const dm = outer.get(deptId);
+          if (dm) {
+            dm.set(dk, (dm.get(dk) ?? 0) + 1);
+          }
         }
       }
-      outer.set(dept.id, dm);
     }
     return outer;
   }, [departments, requests]);
