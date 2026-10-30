@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, Fragment } from "react";
 import { format, isWeekend, getDaysInMonth } from "date-fns";
 import { da } from "date-fns/locale";
 import { ABSENCE_TYPE_LABELS, ABSENCE_TYPE_COLORS } from "@/lib/utils";
@@ -83,6 +83,23 @@ export function PrintCalendarView({
 
   const today = new Date();
   const todayKey = format(today, "yyyy-MM-dd");
+
+  // Performance optimization: Precomputing date-fns format calls to reduce overhead
+  // from O(Users * Days) down to O(Days). Speeds up print rendering significantly.
+  const formattedDays = useMemo(() => {
+    return days.map(d => {
+      const dk = format(d, "yyyy-MM-dd");
+      return {
+        d, dk,
+        holidayName: holidayMap.get(dk),
+        holiday: holidayMap.has(dk),
+        isWeekend: isWeekend(d),
+        isToday: dk === todayKey,
+        dayOfWeek: (d.getDay() + 6) % 7,
+        dateNum: d.getDate()
+      };
+    });
+  }, [days, holidayMap, todayKey]);
 
   // Collect all absence types used this month for the legend
   const usedAbsenceTypes = useMemo(() => {
@@ -226,14 +243,9 @@ export function PrintCalendarView({
         <thead>
           <tr>
             <th style={S.thName}>Medarbejder</th>
-            {days.map((d, i) => {
-              const dk = format(d, "yyyy-MM-dd");
-              const weekend = isWeekend(d);
-              const holiday = holidayMap.has(dk);
-              const isToday = dk === todayKey;
-              const dayOfWeek = (d.getDay() + 6) % 7; // Mon=0
+            {formattedDays.map(({ d, dk, holidayName, holiday, isWeekend: weekend, isToday, dayOfWeek, dateNum }, i) => {
               return (
-                <th key={dk} title={holidayMap.get(dk)} style={{
+                <th key={dk} title={holidayName} style={{
                   background: isToday ? "#2563eb" : holiday ? "#dc2626" : weekend ? "#374151" : "#1e3a5f",
                   color: "#fff",
                   padding: "5px 1px",
@@ -243,7 +255,7 @@ export function PrintCalendarView({
                   borderRadius: i === daysInMonth - 1 ? "0 4px 0 0" : undefined,
                 }}>
                   <div style={{ fontSize: "9px", opacity: 0.7 }}>{DAY_INITIALS[dayOfWeek]}</div>
-                  <div style={{ fontSize: "13px", fontWeight: 800, lineHeight: 1.1 }}>{d.getDate()}</div>
+                  <div style={{ fontSize: "13px", fontWeight: 800, lineHeight: 1.1 }}>{dateNum}</div>
                   {holiday && <div style={{ fontSize: "7px", opacity: 0.9 }}>🎌</div>}
                 </th>
               );
@@ -257,7 +269,7 @@ export function PrintCalendarView({
             const headerBg = color?.hex ?? "#334155";
 
             return (
-              <>
+              <Fragment key={`dept-group-${dept.id}`}>
                 {/* Dept header row */}
                 <tr key={`dept-${dept.id}`}>
                   <td colSpan={daysInMonth + 1} style={{
@@ -309,14 +321,10 @@ export function PrintCalendarView({
                       </td>
 
                       {/* Day cells */}
-                      {days.map((d) => {
-                        const dk = format(d, "yyyy-MM-dd");
+                      {formattedDays.map(({ dk, holiday, isWeekend: weekend, isToday }) => {
                         const reqs = requestLookup.get(emp.id)?.get(dk) ?? [];
                         const approved = reqs.find((r) => r.status === "APPROVED");
                         const pending = reqs.find((r) => r.status === "PENDING") && isManagerOrAdmin;
-                        const weekend = isWeekend(d);
-                        const holiday = holidayMap.has(dk);
-                        const isToday = dk === todayKey;
 
                         const entry = approved?.entries.find(
                           (e) => new Date(e.date).toISOString().slice(0, 10) === dk
@@ -366,7 +374,7 @@ export function PrintCalendarView({
                     </tr>
                   );
                 })}
-              </>
+              </Fragment>
             );
           })}
         </tbody>
