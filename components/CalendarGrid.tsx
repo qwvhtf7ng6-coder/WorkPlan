@@ -363,8 +363,13 @@ function MobileCalendarList({
   const requestsByUser = useMemo(() => {
     const map = new Map<string, CalendarRequest[]>();
     for (const req of requests) {
-      if (!map.has(req.user.id)) map.set(req.user.id, []);
-      map.get(req.user.id)!.push(req);
+      // ⚡ Bolt: Optimize map population by avoiding double lookups (has then get)
+      let userReqs = map.get(req.user.id);
+      if (!userReqs) {
+        userReqs = [];
+        map.set(req.user.id, userReqs);
+      }
+      userReqs.push(req);
     }
     return map;
   }, [requests]);
@@ -498,10 +503,18 @@ export default function CalendarGrid({
     const map = new Map<string, Map<string, CalendarShift[]>>();
     for (const s of shifts) {
       const dk = new Date(s.date).toISOString().slice(0, 10);
-      if (!map.has(s.userId)) map.set(s.userId, new Map());
-      const dm = map.get(s.userId)!;
-      if (!dm.has(dk)) dm.set(dk, []);
-      dm.get(dk)!.push(s);
+      // ⚡ Bolt: Optimize nested map lookups by caching truthy results and skipping redundant .has() / .get()
+      let dm = map.get(s.userId);
+      if (!dm) {
+        dm = new Map();
+        map.set(s.userId, dm);
+      }
+      let dayShifts = dm.get(dk);
+      if (!dayShifts) {
+        dayShifts = [];
+        dm.set(dk, dayShifts);
+      }
+      dayShifts.push(s);
     }
     return map;
   }, [shifts]);
@@ -509,12 +522,20 @@ export default function CalendarGrid({
   const requestLookup = useMemo(() => {
     const map = new Map<string, Map<string, CalendarRequest[]>>();
     for (const req of requests) {
+      // ⚡ Bolt: Hoist the outer user lookup outside the entry loop and cache truthy values
+      let dm = map.get(req.user.id);
+      if (!dm) {
+        dm = new Map();
+        map.set(req.user.id, dm);
+      }
       for (const entry of req.entries) {
         const dk = new Date(entry.date).toISOString().slice(0, 10);
-        if (!map.has(req.user.id)) map.set(req.user.id, new Map());
-        const dm = map.get(req.user.id)!;
-        if (!dm.has(dk)) dm.set(dk, []);
-        dm.get(dk)!.push(req);
+        let dayReqs = dm.get(dk);
+        if (!dayReqs) {
+          dayReqs = [];
+          dm.set(dk, dayReqs);
+        }
+        dayReqs.push(req);
       }
     }
     return map;
@@ -522,18 +543,35 @@ export default function CalendarGrid({
 
   const deptCapacity = useMemo(() => {
     const outer = new Map<string, Map<string, number>>();
+
+    // ⚡ Bolt: Precompute user-to-departments map to drop complexity from O(D*R*U) to O(D*U + R*E)
+    const userDepts = new Map<string, string[]>();
     for (const dept of departments) {
-      const dm = new Map<string, number>();
-      for (const req of requests) {
-        if (req.status !== "APPROVED") continue;
-        if (!dept.users.some((u) => u.id === req.user.id)) continue;
+      outer.set(dept.id, new Map<string, number>());
+      for (const user of dept.users) {
+        let depts = userDepts.get(user.id);
+        if (!depts) {
+          depts = [];
+          userDepts.set(user.id, depts);
+        }
+        depts.push(dept.id);
+      }
+    }
+
+    for (const req of requests) {
+      if (req.status !== "APPROVED") continue;
+      const deptsForUser = userDepts.get(req.user.id);
+      if (!deptsForUser) continue;
+
+      for (const deptId of deptsForUser) {
+        const dm = outer.get(deptId)!;
         for (const entry of req.entries) {
           const dk = new Date(entry.date).toISOString().slice(0, 10);
           dm.set(dk, (dm.get(dk) ?? 0) + 1);
         }
       }
-      outer.set(dept.id, dm);
     }
+
     return outer;
   }, [departments, requests]);
 
