@@ -84,6 +84,14 @@ export function PrintCalendarView({
   const today = new Date();
   const todayKey = format(today, "yyyy-MM-dd");
 
+  // Precompute formatting to optimize O(Users * Days) to O(Days)
+  const formattedDays = useMemo(() => days.map(d => ({
+    d,
+    dk: format(d, "yyyy-MM-dd"),
+    isWeekend: isWeekend(d)
+  })), [days]);
+
+
   // Collect all absence types used this month for the legend
   const usedAbsenceTypes = useMemo(() => {
     const types = new Set<string>();
@@ -309,12 +317,11 @@ export function PrintCalendarView({
                       </td>
 
                       {/* Day cells */}
-                      {days.map((d) => {
-                        const dk = format(d, "yyyy-MM-dd");
+                      {formattedDays.map((fd) => {
+                        const { dk, isWeekend: weekend } = fd;
                         const reqs = requestLookup.get(emp.id)?.get(dk) ?? [];
                         const approved = reqs.find((r) => r.status === "APPROVED");
                         const pending = reqs.find((r) => r.status === "PENDING") && isManagerOrAdmin;
-                        const weekend = isWeekend(d);
                         const holiday = holidayMap.has(dk);
                         const isToday = dk === todayKey;
 
