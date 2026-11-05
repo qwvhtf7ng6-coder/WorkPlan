@@ -59,34 +59,44 @@ function AbsenceReport({ users, requests, departments, currentYear }: Props) {
   const [deptFilter, setDeptFilter] = useState("");
 
   const rows = useMemo(() => {
+    // Optimization: Pre-group approved requests by user outside the mapping loop to reduce O(U * R) complexity
+    // and replace nested iterative array filtering and Date parsing with a single-pass loop.
+    const approvedReqsByUser = new Map<string, ReportRequest[]>();
+    for (const u of users) {
+      approvedReqsByUser.set(u.id, []);
+    }
+
+    for (const r of requests) {
+      if (r.status !== "APPROVED") continue;
+      const rYear = new Date(r.createdAt).getFullYear();
+      if (rYear !== year) continue;
+
+      const userReqs = approvedReqsByUser.get(r.userId);
+      if (userReqs) {
+        userReqs.push(r);
+      }
+    }
+
     return users
       .filter((u) => !deptFilter || u.department?.id === deptFilter)
       .map((u) => {
-        const userReqs = requests.filter((r) => {
-          if (r.userId !== u.id) return false;
-          if (r.status !== "APPROVED") return false;
-          const y = new Date(r.createdAt).getFullYear();
-          if (y !== year) return false;
-          return true;
-        });
+        const userReqs = approvedReqsByUser.get(u.id)!;
 
-        // Filter entries by month if set
-        const filteredEntries = userReqs.flatMap((r) =>
-          r.entries.filter((e) => {
+        const monthly = new Array(12).fill(0);
+        let totalDays = 0;
+
+        for (const r of userReqs) {
+          for (const e of r.entries) {
             const d = new Date(e.date);
-            if (d.getFullYear() !== year) return false;
-            if (month !== "all" && d.getMonth() !== month) return false;
-            return true;
-          })
-        );
-
-        const totalDays = filteredEntries.reduce((s, e) => s + e.days, 0);
-
-        // Monthly breakdown
-        const monthly = Array.from({ length: 12 }, (_, m) => {
-          const days = filteredEntries.filter((e) => new Date(e.date).getMonth() === m).reduce((s, e) => s + e.days, 0);
-          return days;
-        });
+            if (d.getFullYear() === year) {
+              const m = d.getMonth();
+              if (month === "all" || m === month) {
+                monthly[m] += e.days;
+                totalDays += e.days;
+              }
+            }
+          }
+        }
 
         return { user: u, totalDays, monthly, reqCount: userReqs.length };
       })
@@ -211,20 +221,50 @@ function DepartmentReport({ departments, requests, currentYear }: Props) {
   const [year, setYear] = useState(currentYear);
 
   const rows = useMemo(() => {
-    return departments.map((dept) => {
-      const deptReqs = requests.filter((r) => r.departmentId === dept.id && new Date(r.createdAt).getFullYear() === year);
-      const approved = deptReqs.filter((r) => r.status === "APPROVED");
-      const pending = deptReqs.filter((r) => r.status === "PENDING");
-      const rejected = deptReqs.filter((r) => r.status === "REJECTED");
-      const totalDays = approved.flatMap((r) => r.entries).reduce((s, e) => s + e.days, 0);
+    // Optimization: Pre-group and filter requests outside the department loop to reduce O(D * R) to O(R) + O(D * E)
+    // and replace iterative Date parsing and array methods with a single-pass accumulation block.
+    const reqsByDept = new Map<string, { approved: ReportRequest[]; pending: number; rejected: number; total: number }>();
 
-      const monthly = Array.from({ length: 12 }, (_, m) =>
-        approved.flatMap((r) => r.entries).filter((e) => new Date(e.date).getMonth() === m && new Date(e.date).getFullYear() === year).reduce((s, e) => s + e.days, 0)
-      );
+    for (const d of departments) {
+      reqsByDept.set(d.id, { approved: [], pending: 0, rejected: 0, total: 0 });
+    }
+
+    for (const r of requests) {
+      const rYear = new Date(r.createdAt).getFullYear();
+      if (rYear !== year) continue;
+
+      const deptData = reqsByDept.get(r.departmentId);
+      if (deptData) {
+        deptData.total++;
+        if (r.status === "APPROVED") deptData.approved.push(r);
+        else if (r.status === "PENDING") deptData.pending++;
+        else if (r.status === "REJECTED") deptData.rejected++;
+      }
+    }
+
+    return departments.map((dept) => {
+      const data = reqsByDept.get(dept.id)!;
+
+      const monthly = new Array(12).fill(0);
+      let totalDays = 0;
+
+      for (const r of data.approved) {
+        for (const e of r.entries) {
+          const d = new Date(e.date);
+          if (d.getFullYear() === year) {
+            const m = d.getMonth();
+            monthly[m] += e.days;
+            totalDays += e.days;
+          }
+        }
+      }
 
       const peakMonth = monthly.indexOf(Math.max(...monthly));
 
-      return { dept, totalDays, monthly, peakMonth, approved: approved.length, pending: pending.length, rejected: rejected.length, total: deptReqs.length };
+      return {
+        dept, totalDays, monthly, peakMonth,
+        approved: data.approved.length, pending: data.pending, rejected: data.rejected, total: data.total
+      };
     }).sort((a, b) => b.totalDays - a.totalDays);
   }, [departments, requests, year]);
 
