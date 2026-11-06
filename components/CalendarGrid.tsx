@@ -495,44 +495,78 @@ export default function CalendarGrid({
   const holidayMap = useMemo(() => new Map<string, string>(holidays.map((h) => [new Date(h.date).toISOString().slice(0, 10), h.name])), [holidays]);
 
   const shiftLookup = useMemo(() => {
+    // ⚡ Bolt: Halve Map lookup overhead by storing the result of Map.get in a variable
     const map = new Map<string, Map<string, CalendarShift[]>>();
     for (const s of shifts) {
       const dk = new Date(s.date).toISOString().slice(0, 10);
-      if (!map.has(s.userId)) map.set(s.userId, new Map());
-      const dm = map.get(s.userId)!;
-      if (!dm.has(dk)) dm.set(dk, []);
-      dm.get(dk)!.push(s);
+      let userMap = map.get(s.userId);
+      if (!userMap) {
+        userMap = new Map();
+        map.set(s.userId, userMap);
+      }
+      let dayShifts = userMap.get(dk);
+      if (!dayShifts) {
+        dayShifts = [];
+        userMap.set(dk, dayShifts);
+      }
+      dayShifts.push(s);
     }
     return map;
   }, [shifts]);
 
   const requestLookup = useMemo(() => {
+    // ⚡ Bolt: Hoist outer Map lookup outside inner loop and optimize Map insertions
     const map = new Map<string, Map<string, CalendarRequest[]>>();
     for (const req of requests) {
+      let userMap = map.get(req.user.id);
+      if (!userMap) {
+        userMap = new Map();
+        map.set(req.user.id, userMap);
+      }
       for (const entry of req.entries) {
         const dk = new Date(entry.date).toISOString().slice(0, 10);
-        if (!map.has(req.user.id)) map.set(req.user.id, new Map());
-        const dm = map.get(req.user.id)!;
-        if (!dm.has(dk)) dm.set(dk, []);
-        dm.get(dk)!.push(req);
+        let dayReqs = userMap.get(dk);
+        if (!dayReqs) {
+          dayReqs = [];
+          userMap.set(dk, dayReqs);
+        }
+        dayReqs.push(req);
       }
     }
     return map;
   }, [requests]);
 
   const deptCapacity = useMemo(() => {
+    // ⚡ Bolt: Optimize deptCapacity calculation from O(Departments * Requests * Users) to O(Departments * Users + Requests * Entries)
+    // by building a user-to-departments lookup map first and pre-filtering approved requests.
     const outer = new Map<string, Map<string, number>>();
+    const userToDepts = new Map<string, string[]>();
+
     for (const dept of departments) {
-      const dm = new Map<string, number>();
-      for (const req of requests) {
-        if (req.status !== "APPROVED") continue;
-        if (!dept.users.some((u) => u.id === req.user.id)) continue;
-        for (const entry of req.entries) {
-          const dk = new Date(entry.date).toISOString().slice(0, 10);
+      outer.set(dept.id, new Map<string, number>());
+      for (const user of dept.users) {
+        let depts = userToDepts.get(user.id);
+        if (!depts) {
+          depts = [];
+          userToDepts.set(user.id, depts);
+        }
+        depts.push(dept.id);
+      }
+    }
+
+    for (const req of requests) {
+      if (req.status !== "APPROVED") continue;
+
+      const userDepts = userToDepts.get(req.user.id);
+      if (!userDepts || userDepts.length === 0) continue;
+
+      for (const entry of req.entries) {
+        const dk = new Date(entry.date).toISOString().slice(0, 10);
+        for (const deptId of userDepts) {
+          const dm = outer.get(deptId)!;
           dm.set(dk, (dm.get(dk) ?? 0) + 1);
         }
       }
-      outer.set(dept.id, dm);
     }
     return outer;
   }, [departments, requests]);
