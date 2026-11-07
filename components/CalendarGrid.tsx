@@ -180,6 +180,20 @@ function CalendarTable({
   isManagerOrAdmin?: boolean;
   shiftLookup: Map<string, Map<string, CalendarShift[]>>;
 }) {
+  // ⚡ Bolt: Precompute expensive date-fns operations outside the nested rendering loops to reduce O(Users * Days) overhead to O(Days)
+  const dayCols = useMemo(() => {
+    return days.map((d) => {
+      const dk = format(d, "yyyy-MM-dd");
+      return {
+        date: d,
+        key: dk,
+        weekend: isWeekend(d),
+        holidayName: holidayMap.get(dk),
+        isHoliday: holidayMap.has(dk),
+        isToday: dk === todayKey,
+      };
+    });
+  }, [days, holidayMap, todayKey]);
   return (
     <table className="border-collapse text-xs" style={{ minWidth: "max-content" }}>
       <thead className="sticky top-0 z-20">
@@ -191,11 +205,8 @@ function CalendarTable({
           >
             Medarbejder
           </th>
-          {days.map((d) => {
-            const dk = format(d, "yyyy-MM-dd");
-            const holiday = holidayMap.get(dk);
-            const weekend = isWeekend(d);
-            const isToday = dk === todayKey;
+          {dayCols.map((col) => {
+            const { date: d, key: dk, holidayName: holiday, weekend, isToday } = col;
             return (
               <th
                 key={dk}
@@ -247,11 +258,9 @@ function CalendarTable({
                 >
                   {dept.name}
                 </td>
-                {days.map((d) => {
-                  const dk = format(d, "yyyy-MM-dd");
+                {dayCols.map((col) => {
+                  const { key: dk, weekend, isHoliday: holiday } = col;
                   const count = capacityMap.get(dk) ?? 0;
-                  const weekend = isWeekend(d);
-                  const holiday = holidayMap.has(dk);
                   return (
                     <td key={dk} className="border-b border-r text-center py-0.5"
                       style={{ borderColor: `${headerBg}66`, backgroundColor: weekend || holiday ? `${headerBg}88` : headerBg }}>
@@ -279,14 +288,12 @@ function CalendarTable({
                       {emp.name}
                     </span>
                   </td>
-                  {days.map((d) => {
-                    const dk = format(d, "yyyy-MM-dd");
+                  {dayCols.map((col) => {
+                    const { key: dk, weekend, isHoliday: holiday } = col;
                     const reqs = requestLookup.get(emp.id)?.get(dk) ?? [];
                     const cellShifts = dept.shiftsEnabled
                       ? (shiftLookup.get(emp.id)?.get(dk) ?? [])
                       : [];
-                    const weekend = isWeekend(d);
-                    const holiday = holidayMap.has(dk);
                     const hasApproved = reqs.some((r) => r.status === "APPROVED");
                     const hasPending = reqs.some((r) => r.status === "PENDING") && !!isManagerOrAdmin;
                     const approvedEntry = reqs.find((r) => r.status === "APPROVED")?.entries.find((e) => new Date(e.date).toISOString().slice(0, 10) === dk);
