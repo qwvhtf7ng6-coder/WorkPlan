@@ -97,6 +97,21 @@ export function PrintCalendarView({
 
   const totalEmployees = departments.reduce((s, d) => s + d.users.length, 0);
 
+  // ⚡ Bolt: Precompute expensive date-fns operations outside the nested rendering loops to reduce O(Users * Days) overhead to O(Days)
+  const dayCols = useMemo(() => {
+    return days.map((d) => {
+      const dk = format(d, "yyyy-MM-dd");
+      return {
+        date: d,
+        key: dk,
+        weekend: isWeekend(d),
+        holidayName: holidayMap.get(dk),
+        isHoliday: holidayMap.has(dk),
+        isToday: dk === todayKey,
+      };
+    });
+  }, [days, holidayMap, todayKey]);
+
   // ── Styles ──────────────────────────────────────────────────────────────────
   const S = {
     page: {
@@ -226,14 +241,11 @@ export function PrintCalendarView({
         <thead>
           <tr>
             <th style={S.thName}>Medarbejder</th>
-            {days.map((d, i) => {
-              const dk = format(d, "yyyy-MM-dd");
-              const weekend = isWeekend(d);
-              const holiday = holidayMap.has(dk);
-              const isToday = dk === todayKey;
+            {dayCols.map((col, i) => {
+              const { date: d, key: dk, weekend, isHoliday: holiday, isToday } = col;
               const dayOfWeek = (d.getDay() + 6) % 7; // Mon=0
               return (
-                <th key={dk} title={holidayMap.get(dk)} style={{
+                <th key={dk} title={col.holidayName} style={{
                   background: isToday ? "#2563eb" : holiday ? "#dc2626" : weekend ? "#374151" : "#1e3a5f",
                   color: "#fff",
                   padding: "5px 1px",
@@ -309,14 +321,11 @@ export function PrintCalendarView({
                       </td>
 
                       {/* Day cells */}
-                      {days.map((d) => {
-                        const dk = format(d, "yyyy-MM-dd");
+                      {dayCols.map((col) => {
+                        const { key: dk, weekend, isHoliday: holiday, isToday } = col;
                         const reqs = requestLookup.get(emp.id)?.get(dk) ?? [];
                         const approved = reqs.find((r) => r.status === "APPROVED");
                         const pending = reqs.find((r) => r.status === "PENDING") && isManagerOrAdmin;
-                        const weekend = isWeekend(d);
-                        const holiday = holidayMap.has(dk);
-                        const isToday = dk === todayKey;
 
                         const entry = approved?.entries.find(
                           (e) => new Date(e.date).toISOString().slice(0, 10) === dk
