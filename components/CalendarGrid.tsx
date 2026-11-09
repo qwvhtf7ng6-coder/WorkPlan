@@ -521,18 +521,37 @@ export default function CalendarGrid({
   }, [requests]);
 
   const deptCapacity = useMemo(() => {
+    // BOLT OPTIMIZATION: Precompute user-to-departments map to avoid nested O(D * R) array searches.
+    // This reduces time complexity from O(Departments * Requests * Entries) to O(Requests * Entries)
     const outer = new Map<string, Map<string, number>>();
     for (const dept of departments) {
-      const dm = new Map<string, number>();
-      for (const req of requests) {
-        if (req.status !== "APPROVED") continue;
-        if (!dept.users.some((u) => u.id === req.user.id)) continue;
+      outer.set(dept.id, new Map<string, number>());
+    }
+
+    const userToDepts = new Map<string, string[]>();
+    for (const dept of departments) {
+      for (const u of dept.users) {
+        let depts = userToDepts.get(u.id);
+        if (!depts) {
+          depts = [];
+          userToDepts.set(u.id, depts);
+        }
+        depts.push(dept.id);
+      }
+    }
+
+    for (const req of requests) {
+      if (req.status !== "APPROVED") continue;
+      const depts = userToDepts.get(req.user.id);
+      if (!depts) continue;
+
+      for (const deptId of depts) {
+        const dm = outer.get(deptId)!;
         for (const entry of req.entries) {
           const dk = new Date(entry.date).toISOString().slice(0, 10);
           dm.set(dk, (dm.get(dk) ?? 0) + 1);
         }
       }
-      outer.set(dept.id, dm);
     }
     return outer;
   }, [departments, requests]);
